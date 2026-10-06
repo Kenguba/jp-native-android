@@ -344,22 +344,11 @@ public class FloatingService extends Service {
     }
 
     private void toggleSearchPanel() {
-        if (SearchOverlayActivity.VISIBLE) {
+        if (searchPanel != null) {
             removeSearchPanel();
             return;
         }
-
-        removeResultCard();
-        Intent i = new Intent(this, SearchOverlayActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
-                        Intent.FLAG_ACTIVITY_NO_ANIMATION |
-                        Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        try {
-            startActivity(i);
-        } catch (Exception e) {
-            showResultCard("搜索页打开失败",
-                    e.getMessage() == null ? "未知错误" : e.getMessage());
-        }
+        showSearchPanel();
     }
 
     private void requestProjectionPermissionNow() {
@@ -660,11 +649,6 @@ public class FloatingService extends Service {
     }
 
     private void removeSearchPanel() {
-        try {
-            sendBroadcast(new Intent(SearchOverlayActivity.ACTION_CLOSE)
-                    .setPackage(getPackageName()));
-        } catch (Exception ignored) {}
-
         if (searchPanel != null && wm != null) {
             try {
                 InputMethodManager imm =
