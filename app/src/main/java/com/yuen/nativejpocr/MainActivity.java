@@ -13,6 +13,7 @@ import android.hardware.display.VirtualDisplay;
 import android.media.Image;
 import android.media.ImageReader;
 import android.media.projection.MediaProjection;
+import android.media.projection.MediaProjectionConfig;
 import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.*;
@@ -157,7 +158,14 @@ public class MainActivity extends Activity {
                 requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},REQ_NOTIFY); return;
             }
             MediaProjectionManager m=(MediaProjectionManager)getSystemService(MEDIA_PROJECTION_SERVICE);
-            startActivityForResult(m.createScreenCaptureIntent(),REQ_CAPTURE);
+            Intent captureIntent;
+            if(Build.VERSION.SDK_INT>=34){
+                MediaProjectionConfig config=MediaProjectionConfig.createConfigForDefaultDisplay();
+                captureIntent=m.createScreenCaptureIntent(config);
+            }else{
+                captureIntent=m.createScreenCaptureIntent();
+            }
+            startActivityForResult(captureIntent,REQ_CAPTURE);
         }
         @Override public void onRequestPermissionsResult(int r,String[] p,int[] g){
             super.onRequestPermissionsResult(r,p,g);
