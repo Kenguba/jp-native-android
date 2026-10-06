@@ -14,10 +14,56 @@
 - PROCESS_TEXT / SEND
 - 桌面搜索 Widget
 
-构建：
+## Android CPU 架构 / ABI 说明
+
+这里的 v7、v8 指的是 Android 设备的 CPU 指令集架构（ABI），不是 Android 系统版本。
+
+| ABI | 简称 | 位数 | 主要设备 / 用途 |
+| --- | --- | --- | --- |
+| `armeabi-v7a` | v7 | 32 位 | 老 Android 手机、旧平板 |
+| `arm64-v8a` | v8 | 64 位 | 现在绝大多数 Android 手机 |
+| `x86` | x86 | 32 位 | 老模拟器、少量旧设备 |
+| `x86_64` | x86_64 | 64 位 | 模拟器、部分 Chromebook / 特殊设备 |
+
+### APK 下载建议
+
+每次 GitHub Actions 构建会一次生成 4 个 APK：
+
+| APK | 包含架构 | 建议 |
+| --- | --- | --- |
+| `jp-native-android-arm64-v8a.apk` | `arm64-v8a` | 推荐给现在绝大多数 Android 手机，体积最小 |
+| `jp-native-android-armeabi-v7a.apk` | `armeabi-v7a` | 老旧 32 位 ARM 手机 / 平板 |
+| `jp-native-android-arm.apk` | `arm64-v8a + armeabi-v7a` | 手机通用集合版，兼容新旧 ARM 手机 |
+| `jp-native-android-universal.apk` | `arm64-v8a + armeabi-v7a + x86 + x86_64` | 全架构版，兼容性最高，体积最大 |
+
+普通用户建议：
+
+- 新款 Android 手机：下载 `arm64-v8a`
+- 不确定新旧 ARM 架构：下载 `arm`
+- 老旧 32 位设备：下载 `armeabi-v7a`
+- 模拟器 / Chromebook / 特殊设备 / 完全不确定：下载 `universal`
+
+> `arm64-v8a` 和 `armeabi-v7a` 是当前手机端最重要的两种 ARM ABI。x86 / x86_64 主要用于模拟器和少量特殊设备，所以不单独提供 x86 APK，它们统一包含在 universal 全架构版中。
+
+## 本地构建
+
+一次构建全部 4 个 APK：
+
 ```bash
-gradle :app:assembleDebug
+gradle --no-daemon \
+  :app:assembleUniversalDebug \
+  :app:assembleArmDebug \
+  :app:assembleArm64Debug \
+  :app:assembleArmv7Debug
 ```
 
-APK：
-`app/build/outputs/apk/debug/app-debug.apk`
+输出目录：
+
+```text
+app/build/outputs/apk/universal/debug/
+app/build/outputs/apk/arm/debug/
+app/build/outputs/apk/arm64/debug/
+app/build/outputs/apk/armv7/debug/
+```
+
+GitHub Actions 会自动重命名、计算 SHA-256、上传 Artifact，并创建 GitHub Release。
