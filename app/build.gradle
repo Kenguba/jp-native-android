@@ -1,5 +1,12 @@
 plugins { id 'com.android.application' }
 
+def ciVersionCode = System.getenv('VERSION_CODE')
+def ciVersionName = System.getenv('VERSION_NAME')
+def releaseStorePath = System.getenv('ANDROID_KEYSTORE_PATH')
+def releaseStorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+def releaseKeyAlias = System.getenv('ANDROID_KEY_ALIAS')
+def releaseKeyPassword = System.getenv('ANDROID_KEY_PASSWORD')
+
 android {
     namespace 'com.yuen.nativejpocr'
     compileSdk 35
@@ -8,8 +15,8 @@ android {
         applicationId "com.yuen.nativejpocr"
         minSdk 23
         targetSdk 35
-        versionCode 4
-        versionName "0.4.0"
+        versionCode ciVersionCode ? ciVersionCode.toInteger() : 4
+        versionName ciVersionName ?: "0.4.0"
     }
 
     flavorDimensions "abi"
@@ -41,6 +48,17 @@ android {
         }
     }
 
+    signingConfigs {
+        release {
+            if (releaseStorePath && releaseStorePassword && releaseKeyAlias && releaseKeyPassword) {
+                storeFile file(releaseStorePath)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         debug {
             minifyEnabled false
@@ -48,6 +66,7 @@ android {
 
         release {
             minifyEnabled false
+            signingConfig signingConfigs.release
         }
     }
 
