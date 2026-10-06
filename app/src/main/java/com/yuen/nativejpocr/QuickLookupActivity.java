@@ -21,8 +21,10 @@ import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -59,6 +61,7 @@ public class QuickLookupActivity extends Activity {
 
         String incoming = readQuery(getIntent());
         query = incoming == null ? "" : incoming.trim();
+        saveHistory(query);
 
         configureWindow();
 
@@ -336,6 +339,39 @@ public class QuickLookupActivity extends Activity {
             }
             return b.toString();
         }
+    }
+
+    private void saveHistory(String raw) {
+        if (raw == null) return;
+        String value = raw.replace('\n', ' ').replace('\r', ' ').trim();
+        if (value.isEmpty()) return;
+        if (value.length() > 80) value = value.substring(0, 80);
+
+        String saved = getSharedPreferences("lookup_history", MODE_PRIVATE)
+                .getString("items", "");
+
+        Set<String> ordered = new LinkedHashSet<>();
+        ordered.add(value);
+
+        if (saved != null && !saved.isEmpty()) {
+            for (String line : saved.split("\\n")) {
+                String item = line.trim();
+                if (!item.isEmpty()) ordered.add(item);
+                if (ordered.size() >= 20) break;
+            }
+        }
+
+        StringBuilder out = new StringBuilder();
+        for (String item : ordered) {
+            if (out.length() > 0) out.append('\n');
+            out.append(item);
+            if (out.toString().split("\\n").length >= 20) break;
+        }
+
+        getSharedPreferences("lookup_history", MODE_PRIVATE)
+                .edit()
+                .putString("items", out.toString())
+                .apply();
     }
 
     private String readQuery(Intent i) {
