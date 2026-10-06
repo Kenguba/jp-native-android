@@ -67,6 +67,7 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           gradle --no-daemon \
             :app:assembleUniversalRelease \
@@ -77,6 +78,8 @@ jobs:
       - name: Build fallback debug APKs
         if: env.HAS_SIGNING != 'true'
         shell: bash
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           gradle --no-daemon \
             :app:assembleUniversalDebug \
