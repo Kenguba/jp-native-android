@@ -65,9 +65,21 @@ public class QuickLookupActivity extends Activity {
 
         configureWindow();
 
+        FrameLayout screen = new FrameLayout(this);
+        screen.setBackgroundColor(0xffeaf7ff);
+
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setBackground(rounded(Color.WHITE, 16));
+
+        FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT);
+        panelLp.leftMargin = dp(10);
+        panelLp.rightMargin = dp(10);
+        panelLp.topMargin = dp(10);
+        panelLp.bottomMargin = dp(10);
+        screen.addView(panel, panelLp);
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
@@ -176,8 +188,7 @@ public class QuickLookupActivity extends Activity {
         content.addView(footer);
 
         panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        setContentView(panel);
-        setFinishOnTouchOutside(true);
+        setContentView(screen);
 
         if (query.isEmpty()) {
             aiProgress.setVisibility(View.GONE);
@@ -191,6 +202,7 @@ public class QuickLookupActivity extends Activity {
         Window w = getWindow();
         w.setStatusBarColor(0xffeaf7ff);
         w.setNavigationBarColor(Color.WHITE);
+
         if (android.os.Build.VERSION.SDK_INT >= 30 && w.getInsetsController() != null) {
             int light = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS |
                     WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
@@ -201,16 +213,6 @@ public class QuickLookupActivity extends Activity {
                             (android.os.Build.VERSION.SDK_INT >= 26
                                     ? View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR : 0));
         }
-
-        WindowManager.LayoutParams lp = w.getAttributes();
-        int screenW = getResources().getDisplayMetrics().widthPixels;
-        int screenH = getResources().getDisplayMetrics().heightPixels;
-        lp.width = Math.max(dp(300), screenW - dp(18));
-        lp.height = Math.max(dp(420), screenH - dp(100));
-        lp.gravity = Gravity.CENTER;
-        lp.dimAmount = 0.18f;
-        w.setAttributes(lp);
-        w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
     }
 
     private void addSectionHeader(LinearLayout parent, String title) {
