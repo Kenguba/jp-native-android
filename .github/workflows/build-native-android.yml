@@ -12,6 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -31,30 +32,100 @@ jobs:
           echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
           yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
-          "$SDK/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          "$SDK/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
 
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Build debug APK
-        run: gradle --no-daemon :app:assembleDebug
-
-      - name: Prepare APK
+      - name: Build all ABI APKs
         shell: bash
         run: |
-          OUT="jp-native-android-build-${GITHUB_RUN_NUMBER}.apk"
-          cp app/build/outputs/apk/debug/app-debug.apk "$OUT"
-          echo "APK_FILE=$OUT" >> "$GITHUB_ENV"
+          gradle --no-daemon \
+            :app:assembleUniversalDebug \
+            :app:assembleArmDebug \
+            :app:assembleArm64Debug \
+            :app:assembleArmv7Debug
 
-      - name: Verify APK
+      - name: Prepare APK files
         shell: bash
-        run: sha256sum "$APK_FILE"
+        run: |
+          mkdir -p dist
 
-      - uses: actions/upload-artifact@v4
+          cp app/build/outputs/apk/universal/debug/app-universal-debug.apk \
+            dist/jp-native-android-universal.apk
+
+          cp app/build/outputs/apk/arm/debug/app-arm-debug.apk \
+            dist/jp-native-android-arm.apk
+
+          cp app/build/outputs/apk/arm64/debug/app-arm64-debug.apk \
+            dist/jp-native-android-arm64-v8a.apk
+
+          cp app/build/outputs/apk/armv7/debug/app-armv7-debug.apk \
+            dist/jp-native-android-armeabi-v7a.apk
+
+          sha256sum dist/*.apk | tee dist/SHA256SUMS.txt
+
+      - name: Show APK sizes
+        shell: bash
+        run: |
+          ls -lh dist/*.apk
+          echo
+          cat dist/SHA256SUMS.txt
+
+      - name: Upload all APKs as Actions artifact
+        uses: actions/upload-artifact@v4
         with:
           name: jp-native-android-build-${{ github.run_number }}
-          path: ${{ env.APK_FILE }}
+          path: |
+            dist/*.apk
+            dist/SHA256SUMS.txt
+
+      - name: Create Release notes
+        shell: bash
+        run: |
+          cat > release-notes.md <<'EOF'
+          ## APK 架构说明
+
+          这里的 v7、v8 指的是 Android 设备的 CPU 指令集架构（ABI），不是 Android 系统版本。
+
+          | ABI | 简称 | 位数 | 主要设备 / 用途 |
+          | --- | --- | --- | --- |
+          | `armeabi-v7a` | v7 | 32 位 | 老 Android 手机、旧平板 |
+          | `arm64-v8a` | v8 | 64 位 | 现在绝大多数 Android 手机 |
+          | `x86` | x86 | 32 位 | 老模拟器、少量旧设备 |
+          | `x86_64` | x86_64 | 64 位 | 模拟器、部分 Chromebook / 特殊设备 |
+
+          ## 下载哪个 APK
+
+          - **jp-native-android-arm64-v8a.apk**  
+            只包含 `arm64-v8a`。推荐现在绝大多数 Android 手机使用，体积最小。
+
+          - **jp-native-android-armeabi-v7a.apk**  
+            只包含 `armeabi-v7a`。适合老旧 32 位 ARM 手机和平板。
+
+          - **jp-native-android-arm.apk**  
+            包含 `arm64-v8a + armeabi-v7a`。这是手机通用集合版，兼容新旧 ARM 手机。
+
+          - **jp-native-android-universal.apk**  
+            包含 `arm64-v8a + armeabi-v7a + x86 + x86_64`。全架构版，兼容性最高，但体积最大。
+
+          ### 推荐
+
+          - 新款 Android 手机：**arm64-v8a**
+          - 不确定是新 ARM 还是旧 ARM：**arm**
+          - 老旧 32 位设备：**armeabi-v7a**
+          - 模拟器 / Chromebook / 特殊设备 / 完全不确定：**universal**
+
+          x86 和 x86_64 不单独提供 APK，它们已经包含在 universal 全架构版中。
+
+          ## SHA-256
+
+          下载附件中的 `SHA256SUMS.txt` 可以校验 APK 完整性。
+          EOF
 
       - name: Publish GitHub Release
         env:
@@ -62,11 +133,27 @@ jobs:
         shell: bash
         run: |
           TAG="build-${GITHUB_RUN_NUMBER}"
+
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$APK_FILE" --clobber
+            gh release upload "$TAG" \
+              dist/jp-native-android-arm64-v8a.apk \
+              dist/jp-native-android-armeabi-v7a.apk \
+              dist/jp-native-android-arm.apk \
+              dist/jp-native-android-universal.apk \
+              dist/SHA256SUMS.txt \
+              --clobber
+
+            gh release edit "$TAG" \
+              --title "JP Native Android $TAG" \
+              --notes-file release-notes.md
           else
-            gh release create "$TAG" "$APK_FILE" \
+            gh release create "$TAG" \
+              dist/jp-native-android-arm64-v8a.apk \
+              dist/jp-native-android-armeabi-v7a.apk \
+              dist/jp-native-android-arm.apk \
+              dist/jp-native-android-universal.apk \
+              dist/SHA256SUMS.txt \
               --target "$GITHUB_SHA" \
               --title "JP Native Android $TAG" \
-              --generate-notes
+              --notes-file release-notes.md
           fi
