@@ -58,9 +58,19 @@ public class MainActivity extends Activity {
         buildInfo.setTextSize(14);
         buildInfo.setTextColor(0xff6f7780);
         root.addView(buildInfo);
+
+        String lastCrash=getSharedPreferences("crash_log",MODE_PRIVATE)
+                .getString("last","");
+        if(lastCrash!=null && !lastCrash.trim().isEmpty()){
+            TextView crash=text("上次崩溃：\n"+lastCrash);
+            crash.setTextSize(12);
+            crash.setTextColor(0xffb00020);
+            crash.setTextIsSelectable(true);
+            root.addView(crash);
+        }
         root.addView(button("🟠 开启浮动取词（悬浮 + OCR）", v->enableFloatingBubble()));
         root.addView(button("⛔ 关闭桌面悬浮球", v->stopService(new Intent(this,FloatingService.class))));
-        root.addView(button("🔍 打开悬浮搜索页", v->startActivity(new Intent(this,SearchOverlayActivity.class))));
+        root.addView(button("🔍 打开悬浮搜索页", v->openFloatingSearch()));
         root.addView(button("📷 屏幕 OCR", v->startActivity(new Intent(this,OcrActivity.class))));
         TextView note=text("这是自己的浮动取词功能，不调用欧路。\n"
                 +"轻点浮动按钮：打开深色悬浮搜索。\n"
@@ -89,6 +99,21 @@ public class MainActivity extends Activity {
 
     void startFloatingBubble(){
         Intent i=new Intent(this,FloatingService.class);
+        if(Build.VERSION.SDK_INT>=26) startForegroundService(i); else startService(i);
+    }
+
+    void openFloatingSearch(){
+        if(!Settings.canDrawOverlays(this)){
+            pendingProjectionSetup=true;
+            Intent p=new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:"+getPackageName()));
+            startActivity(p);
+            Toast.makeText(this,"请先允许“显示在其他应用上层”",Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        Intent i=new Intent(this,FloatingService.class)
+                .setAction(FloatingService.ACTION_SHOW_SEARCH);
         if(Build.VERSION.SDK_INT>=26) startForegroundService(i); else startService(i);
     }
 
@@ -132,13 +157,20 @@ public class MainActivity extends Activity {
 
         void route(Intent i){
             String q=readIncoming(i);
-            Intent next;
             if(q!=null && !q.trim().isEmpty()){
-                next=new Intent(this,QuickLookupActivity.class).putExtra("query",q.trim());
-            }else{
-                next=new Intent(this,SearchOverlayActivity.class);
+                startActivity(new Intent(this,QuickLookupActivity.class)
+                        .putExtra("query",q.trim()));
+                finish();
+                return;
             }
-            startActivity(next);
+
+            if(Settings.canDrawOverlays(this)){
+                Intent service=new Intent(this,FloatingService.class)
+                        .setAction(FloatingService.ACTION_SHOW_SEARCH);
+                if(Build.VERSION.SDK_INT>=26) startForegroundService(service); else startService(service);
+            }else{
+                startActivity(new Intent(this,MainActivity.class));
+            }
             finish();
         }
 
@@ -350,7 +382,39 @@ public class MainActivity extends Activity {
 
     public static final class App extends Application {
         static Context c;
-        @Override public void onCreate(){ super.onCreate(); c=this; }
+
+        @Override public void onCreate(){
+            super.onCreate();
+            c=this;
+
+            Thread.UncaughtExceptionHandler previous =
+                    Thread.getDefaultUncaughtExceptionHandler();
+
+            Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
+                try {
+                    StringBuilder out=new StringBuilder();
+                    out.append(throwable.getClass().getName())
+                            .append(": ")
+                            .append(throwable.getMessage()==null?"":throwable.getMessage())
+                            .append("\n");
+
+                    StackTraceElement[] trace=throwable.getStackTrace();
+                    int max=Math.min(trace.length,24);
+                    for(int i=0;i<max;i++){
+                        out.append("  at ").append(trace[i].toString()).append("\n");
+                    }
+
+                    getSharedPreferences("crash_log",MODE_PRIVATE)
+                            .edit()
+                            .putString("last",out.toString())
+                            .putLong("time",System.currentTimeMillis())
+                            .apply();
+                }catch(Throwable ignored){}
+
+                if(previous!=null) previous.uncaughtException(thread,throwable);
+            });
+        }
+
         static Context get(){
             if(c!=null)return c;
             throw new IllegalStateException("App context not initialized");
