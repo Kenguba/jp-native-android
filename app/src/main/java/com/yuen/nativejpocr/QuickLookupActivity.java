@@ -11,6 +11,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.WindowInsetsController;
 import android.widget.*;
 
 import org.json.JSONArray;
