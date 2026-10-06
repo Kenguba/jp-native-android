@@ -52,6 +52,12 @@ public class MainActivity extends Activity {
         LinearLayout root=base();
         TextView title=title("日语悬浮搜索");
         root.addView(title);
+
+        TextView buildInfo=text("当前版本：" + BuildConfig.VERSION_NAME
+                + "  ·  versionCode " + BuildConfig.VERSION_CODE);
+        buildInfo.setTextSize(14);
+        buildInfo.setTextColor(0xff6f7780);
+        root.addView(buildInfo);
         root.addView(button("🟠 开启浮动取词（悬浮 + OCR）", v->enableFloatingBubble()));
         root.addView(button("⛔ 关闭桌面悬浮球", v->stopService(new Intent(this,FloatingService.class))));
         root.addView(button("🔍 打开悬浮搜索页", v->startActivity(new Intent(this,SearchOverlayActivity.class))));
