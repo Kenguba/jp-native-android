@@ -57,9 +57,9 @@ public class MainActivity extends Activity {
         root.addView(button("🔍 打开悬浮搜索页", v->startActivity(new Intent(this,SearchOverlayActivity.class))));
         root.addView(button("📷 屏幕 OCR", v->startActivity(new Intent(this,OcrActivity.class))));
         TextView note=text("这是自己的浮动取词功能，不调用欧路。\n"
-                +"轻点淘宝浮标：打开悬浮搜索。\n"
-                +"按住拖动：出现取词框；把框对准日语单词后松手，会截取该区域 OCR，并在当前 App 上方直接显示结果。\n"
-                +"首次使用需要“显示在其他应用上层”以及系统屏幕录制授权。");
+                +"轻点浮动按钮：打开深色悬浮搜索。\n"
+                +"按住拖动：如果尚未授权屏幕共享，会立即呼出系统授权；授权后再次拖动即可区域 OCR 取词。\n"
+                +"屏幕共享只请求“共享整个屏幕”。");
         root.addView(note);
         setContentView(root);
         if(Settings.canDrawOverlays(this)) startFloatingBubble();
@@ -68,17 +68,17 @@ public class MainActivity extends Activity {
     void enableFloatingBubble(){
         if(Settings.canDrawOverlays(this)){
             startFloatingBubble();
-            if(!ScreenCaptureService.READY){
-                startActivity(new Intent(this,OcrActivity.class));
-            }else{
-                Toast.makeText(this,"浮动取词已开启：拖动取词，轻点搜索",Toast.LENGTH_SHORT).show();
-            }
+            Toast.makeText(this,
+                    ScreenCaptureService.READY
+                            ? "浮动取词已开启：拖动取词，轻点搜索"
+                            : "浮动取词已开启：首次拖动时会直接申请整屏共享权限",
+                    Toast.LENGTH_SHORT).show();
             return;
         }
         pendingProjectionSetup=true;
         Intent i=new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:"+getPackageName()));
         startActivity(i);
-        Toast.makeText(this,"请允许“显示在其他应用上层”；返回后会继续申请屏幕取词权限",Toast.LENGTH_LONG).show();
+        Toast.makeText(this,"请允许“显示在其他应用上层”；返回后即可拖动浮标取词",Toast.LENGTH_LONG).show();
     }
 
     void startFloatingBubble(){
@@ -92,10 +92,9 @@ public class MainActivity extends Activity {
             startFloatingBubble();
             if(pendingProjectionSetup){
                 pendingProjectionSetup=false;
-                if(!ScreenCaptureService.READY){
-                    new Handler(Looper.getMainLooper()).postDelayed(
-                            ()->startActivity(new Intent(this,OcrActivity.class)),250);
-                }
+                Toast.makeText(this,
+                        "悬浮球已开启；首次拖动时会直接申请整屏共享权限",
+                        Toast.LENGTH_SHORT).show();
             }
         }
     }
