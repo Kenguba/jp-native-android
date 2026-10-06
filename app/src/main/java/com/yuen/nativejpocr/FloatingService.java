@@ -17,8 +17,12 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.*;
 
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 public class FloatingService extends Service {
     private static final String CH = "floating_lookup";
@@ -373,7 +377,8 @@ public class FloatingService extends Service {
         removeResultCard();
 
         FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(0xb812171f);
+        root.setBackgroundColor(0x8a101820);
+        root.setFocusableInTouchMode(true);
 
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
@@ -389,61 +394,74 @@ public class FloatingService extends Service {
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(15), 0, dp(6), 0);
-        bar.setBackgroundResource(R.drawable.search_bar_bg);
+        bar.setPadding(dp(14), 0, dp(7), 0);
+        bar.setBackground(outline(0xff079bff, 2, 0xed18191d, 15));
+        bar.setElevation(dp(6));
 
         EditText input = new EditText(this);
         input.setSingleLine(true);
-        input.setTextColor(Color.WHITE);
-        input.setHintTextColor(0xff8b96a6);
-        input.setHint("搜索日语单词");
-        input.setTextSize(23);
+        input.setTextColor(0xfff4f5f7);
+        input.setHintTextColor(0xff969ca6);
+        input.setHint("请输入需要查找的内容");
+        input.setTextSize(22);
         input.setBackgroundColor(Color.TRANSPARENT);
         input.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
         input.setSelectAllOnFocus(false);
+        input.setPadding(0, 0, dp(8), 0);
 
-        TextView close = new TextView(this);
-        close.setText("×");
-        close.setTextColor(0xff168bff);
-        close.setTextSize(34);
-        close.setGravity(Gravity.CENTER);
-        close.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
+        ImageView mic = new ImageView(this);
+        mic.setImageResource(R.drawable.ic_search_mic);
+        mic.setColorFilter(0xff079bff);
+        mic.setPadding(dp(10), dp(10), dp(10), dp(10));
 
-        bar.addView(input, new LinearLayout.LayoutParams(
-                0, dp(62), 1));
-        bar.addView(close, new LinearLayout.LayoutParams(
-                dp(54), dp(62)));
+        bar.addView(input, new LinearLayout.LayoutParams(0, dp(64), 1));
+        bar.addView(mic, new LinearLayout.LayoutParams(dp(50), dp(64)));
 
         content.addView(bar, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(62)));
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(64)));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setVerticalScrollBarEnabled(false);
+        scroll.setClipToPadding(false);
 
         LinearLayout suggestions = new LinearLayout(this);
         suggestions.setOrientation(LinearLayout.VERTICAL);
-        suggestions.setPadding(0, dp(14), 0, dp(60));
+        suggestions.setPadding(0, dp(12), 0, dp(72));
         scroll.addView(suggestions, new ScrollView.LayoutParams(
                 ScrollView.LayoutParams.MATCH_PARENT,
                 ScrollView.LayoutParams.WRAP_CONTENT));
 
         LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1);
-        scrollLp.topMargin = dp(8);
+        scrollLp.topMargin = dp(4);
         content.addView(scroll, scrollLp);
+
+        int flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN |
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL |
+                WindowManager.LayoutParams.FLAG_DIM_BEHIND;
+
+        if (Build.VERSION.SDK_INT >= 31) {
+            flags |= WindowManager.LayoutParams.FLAG_BLUR_BEHIND;
+        }
 
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
                 overlayType(),
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN |
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                flags,
                 PixelFormat.TRANSLUCENT);
         lp.gravity = Gravity.TOP | Gravity.START;
+        lp.dimAmount = 0.16f;
         lp.softInputMode =
                 WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
-                WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE;
+                WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN;
+
+        if (Build.VERSION.SDK_INT >= 31) {
+            try {
+                lp.setBlurBehindRadius(dp(24));
+            } catch (Throwable ignored) {}
+        }
 
         searchPanel = root;
         wm.addView(searchPanel, lp);
@@ -473,15 +491,17 @@ public class FloatingService extends Service {
             return false;
         });
 
-        close.setOnClickListener(v -> removeSearchPanel());
-
-        input.requestFocus();
-        main.postDelayed(() -> {
+        input.setOnClickListener(v -> {
+            input.requestFocus();
             InputMethodManager imm =
                     (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
             imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
-        }, 180);
+        });
 
+        mic.setOnClickListener(v ->
+                Toast.makeText(this, "语音搜索入口已预留", Toast.LENGTH_SHORT).show());
+
+        root.requestFocus();
         bringBubbleToFront();
     }
 
@@ -490,75 +510,157 @@ public class FloatingService extends Service {
 
         String q = raw == null ? "" : raw.trim();
         String lower = q.toLowerCase(Locale.ROOT);
-
+        Set<String> shown = new LinkedHashSet<>();
         int count = 0;
 
-        for (Map.Entry<String, String[]> e : MainActivity.WORDS.entrySet()) {
-            String word = e.getKey();
-            String[] d = e.getValue();
+        List<String> history = recentHistory();
 
-            boolean match = q.isEmpty() ||
-                    word.contains(q) ||
-                    d[0].contains(q) ||
-                    d[1].toLowerCase(Locale.ROOT).contains(lower) ||
-                    d[3].contains(q);
+        if (q.isEmpty()) {
+            for (String item : history) {
+                if (item.isEmpty() || !shown.add(item)) continue;
+                suggestions.addView(createSuggestionRow(
+                        item,
+                        lookupSubtitle(item),
+                        true));
+                count++;
+                if (count >= 12) break;
+            }
 
-            if (!match) continue;
+            if (count < 12) {
+                for (Map.Entry<String, String[]> e : MainActivity.WORDS.entrySet()) {
+                    String word = e.getKey();
+                    if (!shown.add(word)) continue;
+                    suggestions.addView(createSuggestionRow(
+                            word,
+                            formatSubtitle(e.getValue()),
+                            true));
+                    count++;
+                    if (count >= 12) break;
+                }
+            }
+        } else {
+            for (String item : history) {
+                if (!item.toLowerCase(Locale.ROOT).contains(lower)) continue;
+                if (!shown.add(item)) continue;
+                suggestions.addView(createSuggestionRow(
+                        item,
+                        lookupSubtitle(item),
+                        true));
+                count++;
+                if (count >= 10) break;
+            }
 
-            suggestions.addView(createSuggestionRow(word, d));
-            count++;
+            for (Map.Entry<String, String[]> e : MainActivity.WORDS.entrySet()) {
+                String word = e.getKey();
+                String[] d = e.getValue();
 
-            if (count >= 12) break;
+                boolean match =
+                        word.contains(q) ||
+                        d[0].contains(q) ||
+                        d[1].toLowerCase(Locale.ROOT).contains(lower) ||
+                        d[3].contains(q);
+
+                if (!match || !shown.add(word)) continue;
+
+                suggestions.addView(createSuggestionRow(
+                        word,
+                        formatSubtitle(d),
+                        true));
+                count++;
+                if (count >= 10) break;
+            }
+
+            if (!shown.contains(q)) {
+                suggestions.addView(createSuggestionRow(
+                        q,
+                        "搜索「" + q + "」",
+                        false));
+                count++;
+            }
         }
 
         if (count == 0) {
             TextView empty = new TextView(this);
-            empty.setText("没有匹配结果\n按键盘搜索键仍可直接查询输入内容");
-            empty.setTextColor(0xff9ba5b3);
+            empty.setText("输入日语、中文或英文进行查询");
+            empty.setTextColor(0xffa4aab3);
             empty.setTextSize(16);
-            empty.setGravity(Gravity.CENTER_HORIZONTAL);
-            empty.setPadding(dp(20), dp(38), dp(20), dp(20));
+            empty.setPadding(dp(56), dp(28), dp(12), dp(20));
             suggestions.addView(empty);
         }
     }
 
-    private View createSuggestionRow(String word, String[] data) {
+    private String formatSubtitle(String[] data) {
+        if (data == null || data.length < 4) return "最近查询";
+        return data[2] + ". " + data[3] + "  ·  " + data[0];
+    }
+
+    private String lookupSubtitle(String query) {
+        String lower = query.toLowerCase(Locale.ROOT);
+        for (Map.Entry<String, String[]> e : MainActivity.WORDS.entrySet()) {
+            String[] d = e.getValue();
+            if (e.getKey().equals(query) ||
+                    d[0].equals(query) ||
+                    d[1].toLowerCase(Locale.ROOT).equals(lower)) {
+                return formatSubtitle(d);
+            }
+        }
+        return "最近查询";
+    }
+
+    private List<String> recentHistory() {
+        String saved = getSharedPreferences("lookup_history", MODE_PRIVATE)
+                .getString("items", "");
+        List<String> out = new ArrayList<>();
+        if (saved == null || saved.isEmpty()) return out;
+
+        for (String line : saved.split("\\n")) {
+            String item = line.trim();
+            if (!item.isEmpty()) out.add(item);
+        }
+        return out;
+    }
+
+    private View createSuggestionRow(String word, String subtitle, boolean historyStyle) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.TOP);
-        row.setPadding(dp(8), dp(13), dp(6), dp(13));
+        row.setPadding(dp(4), dp(10), dp(4), dp(10));
         row.setBackgroundColor(Color.TRANSPARENT);
+        row.setMinimumHeight(dp(72));
 
-        TextView icon = new TextView(this);
-        icon.setText("▣");
-        icon.setTextColor(0xffc1cad5);
-        icon.setTextSize(19);
-        icon.setGravity(Gravity.CENTER_HORIZONTAL);
-
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(R.drawable.ic_history_clock);
+        icon.setColorFilter(0xffc4c9d0);
+        icon.setPadding(dp(7), dp(8), dp(7), dp(8));
         LinearLayout.LayoutParams iconLp =
-                new LinearLayout.LayoutParams(dp(42), dp(44));
+                new LinearLayout.LayoutParams(dp(44), dp(48));
         row.addView(icon, iconLp);
 
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
+        body.setPadding(dp(2), 0, 0, 0);
 
         TextView title = new TextView(this);
         title.setText(word);
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(24);
+        title.setTextColor(0xfff0f2f4);
+        title.setTextSize(22);
         title.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
+        title.setSingleLine(true);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
 
         TextView meaning = new TextView(this);
-        meaning.setText(data[2] + ". " + data[3] + "  ·  " + data[0]);
-        meaning.setTextColor(0xff9ba4b1);
-        meaning.setTextSize(16);
+        meaning.setText(subtitle == null ? "" : subtitle);
+        meaning.setTextColor(0xff9ea5ae);
+        meaning.setTextSize(15);
         meaning.setMaxLines(2);
+        meaning.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        meaning.setPadding(0, dp(2), 0, 0);
 
         body.addView(title);
-        body.addView(meaning);
+        if (subtitle != null && !subtitle.isEmpty()) body.addView(meaning);
 
-        row.addView(body, new LinearLayout.LayoutParams(0,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        row.addView(body, new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1));
 
         row.setOnClickListener(v -> {
             removeSearchPanel();
