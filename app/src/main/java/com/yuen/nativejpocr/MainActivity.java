@@ -54,7 +54,7 @@ public class MainActivity extends Activity {
         root.addView(title);
         root.addView(button("🟠 开启浮动取词（悬浮 + OCR）", v->enableFloatingBubble()));
         root.addView(button("⛔ 关闭桌面悬浮球", v->stopService(new Intent(this,FloatingService.class))));
-        root.addView(button("🔍 打开完整搜索页", v->startActivity(new Intent(this,SearchActivity.class))));
+        root.addView(button("🔍 打开悬浮搜索页", v->startActivity(new Intent(this,SearchOverlayActivity.class))));
         root.addView(button("📷 屏幕 OCR", v->startActivity(new Intent(this,OcrActivity.class))));
         TextView note=text("这是自己的浮动取词功能，不调用欧路。\n"
                 +"轻点淘宝浮标：打开悬浮搜索。\n"
@@ -114,39 +114,38 @@ public class MainActivity extends Activity {
     static int dp(int v){ return Math.round(v*App.get().getResources().getDisplayMetrics().density); }
 
     public static class SearchActivity extends Activity {
-        EditText input; LinearLayout results;
         @Override public void onCreate(Bundle b){
             super.onCreate(b);
-            LinearLayout root=base();
-            input=new EditText(this);
-            input.setHint("输入日语：守る / 漏る / くもる");
-            input.setSingleLine(true);
-            root.addView(input,new LinearLayout.LayoutParams(-1,-2));
-            Button go=button("搜索",v->search(input.getText().toString()));
-            root.addView(go);
-            root.addView(button("📷 屏幕 OCR",v->startActivity(new Intent(this,OcrActivity.class))));
-            results=new LinearLayout(this); results.setOrientation(LinearLayout.VERTICAL);
-            ScrollView sv=new ScrollView(this); sv.addView(results); root.addView(sv,new LinearLayout.LayoutParams(-1,0,1));
-            setContentView(root);
-            String q=readIncoming(getIntent());
-            if(q!=null&&!q.isBlank()){ input.setText(q); search(q); }
-            input.requestFocus();
-            input.postDelayed(()->((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(input,InputMethodManager.SHOW_IMPLICIT),200);
+            route(getIntent());
         }
-        @Override protected void onNewIntent(Intent i){ super.onNewIntent(i); setIntent(i); String q=readIncoming(i); if(q!=null){input.setText(q);search(q);} }
+
+        @Override protected void onNewIntent(Intent i){
+            super.onNewIntent(i);
+            setIntent(i);
+            route(i);
+        }
+
+        void route(Intent i){
+            String q=readIncoming(i);
+            Intent next;
+            if(q!=null && !q.trim().isEmpty()){
+                next=new Intent(this,QuickLookupActivity.class).putExtra("query",q.trim());
+            }else{
+                next=new Intent(this,SearchOverlayActivity.class);
+            }
+            startActivity(next);
+            finish();
+        }
+
         String readIncoming(Intent i){
             if(i==null)return null;
-            if(Intent.ACTION_PROCESS_TEXT.equals(i.getAction())) return String.valueOf(i.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT));
+            if(Intent.ACTION_PROCESS_TEXT.equals(i.getAction())){
+                CharSequence p=i.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT);
+                return p==null?null:p.toString();
+            }
             if(Intent.ACTION_SEND.equals(i.getAction())) return i.getStringExtra(Intent.EXTRA_TEXT);
             if(Intent.ACTION_SEARCH.equals(i.getAction())) return i.getStringExtra("query");
             return i.getStringExtra("query");
-        }
-        void search(String raw){
-            String q=raw==null?"":raw.trim();
-            if(q.isEmpty())return;
-            Intent i=new Intent(this,QuickLookupActivity.class)
-                    .putExtra("query",q);
-            startActivity(i);
         }
     }
 
@@ -338,7 +337,7 @@ public class MainActivity extends Activity {
         @Override public void onUpdate(Context c,AppWidgetManager m,int[] ids){
             for(int id:ids){
                 RemoteViews rv=new RemoteViews(c.getPackageName(),R.layout.widget_search);
-                PendingIntent p=PendingIntent.getActivity(c,10,new Intent(c,SearchActivity.class),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+                PendingIntent p=PendingIntent.getActivity(c,10,new Intent(c,SearchOverlayActivity.class),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
                 rv.setOnClickPendingIntent(R.id.widget_root,p); m.updateAppWidget(id,rv);
             }
         }
