@@ -187,10 +187,16 @@ public class QuickLookupActivity extends Activity {
         Window w = getWindow();
         w.setStatusBarColor(0xffeaf7ff);
         w.setNavigationBarColor(Color.WHITE);
-        w.getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR |
-                        (android.os.Build.VERSION.SDK_INT >= 26
-                                ? View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR : 0));
+        if (android.os.Build.VERSION.SDK_INT >= 30 && w.getInsetsController() != null) {
+            int light = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS |
+                    WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+            w.getInsetsController().setSystemBarsAppearance(light, light);
+        } else {
+            w.getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR |
+                            (android.os.Build.VERSION.SDK_INT >= 26
+                                    ? View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR : 0));
+        }
 
         WindowManager.LayoutParams lp = w.getAttributes();
         int screenW = getResources().getDisplayMetrics().widthPixels;
