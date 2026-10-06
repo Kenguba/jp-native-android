@@ -8,8 +8,9 @@
         <item name="android:windowLightStatusBar">false</item>
     </style>
 
-    <style name="Theme.JpQuickLookup" parent="@android:style/Theme.Material.Light.Dialog.Alert">
+    <style name="Theme.JpQuickLookup" parent="@android:style/Theme.Material.Light.NoActionBar">
         <item name="android:windowNoTitle">true</item>
+        <item name="android:windowBackground">#EAF7FF</item>
         <item name="android:colorAccent">#0AA3FF</item>
         <item name="android:statusBarColor">#EAF7FF</item>
         <item name="android:navigationBarColor">#FFFFFF</item>
