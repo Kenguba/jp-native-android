@@ -124,11 +124,18 @@ public final class SearchOverlayActivity extends Activity {
         w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
                 WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
 
-        View decor = w.getDecorView();
-        int vis = decor.getSystemUiVisibility();
-        vis &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
-        if (Build.VERSION.SDK_INT >= 26) vis &= ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
-        decor.setSystemUiVisibility(vis);
+        if (Build.VERSION.SDK_INT >= 30 && w.getInsetsController() != null) {
+            w.getInsetsController().setSystemBarsAppearance(
+                    0,
+                    WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS |
+                            WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
+        } else {
+            View decor = w.getDecorView();
+            int vis = decor.getSystemUiVisibility();
+            vis &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            if (Build.VERSION.SDK_INT >= 26) vis &= ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+            decor.setSystemUiVisibility(vis);
+        }
     }
 
     private void updateSuggestions(LinearLayout suggestions, String raw) {
