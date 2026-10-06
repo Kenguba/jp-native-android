@@ -3,3 +3,9 @@
 local.properties
 **/build/
 *.iml
+
+# Android release signing private material
+*.jks
+*.keystore
+keystore.properties
+signing/private/
