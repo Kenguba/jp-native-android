@@ -62,11 +62,20 @@ public class MainActivity extends Activity {
         String lastCrash=getSharedPreferences("crash_log",MODE_PRIVATE)
                 .getString("last","");
         if(lastCrash!=null && !lastCrash.trim().isEmpty()){
-            TextView crash=text("上次崩溃：\n"+lastCrash);
+            TextView crash=text("上次 Java 崩溃：\n"+lastCrash);
             crash.setTextSize(12);
             crash.setTextColor(0xffb00020);
             crash.setTextIsSelectable(true);
             root.addView(crash);
+        }
+
+        String exitInfo=systemExitSummary();
+        if(exitInfo!=null && !exitInfo.isEmpty()){
+            TextView exit=text("系统上次退出记录：\n"+exitInfo);
+            exit.setTextSize(12);
+            exit.setTextColor(0xff8a3a00);
+            exit.setTextIsSelectable(true);
+            root.addView(exit);
         }
         root.addView(button("🟠 开启浮动取词（悬浮 + OCR）", v->enableFloatingBubble()));
         root.addView(button("⛔ 关闭桌面悬浮球", v->stopService(new Intent(this,FloatingService.class))));
@@ -127,6 +136,43 @@ public class MainActivity extends Activity {
                         "悬浮球已开启；首次拖动时会直接申请整屏共享权限",
                         Toast.LENGTH_SHORT).show();
             }
+        }
+    }
+
+    String systemExitSummary(){
+        if(Build.VERSION.SDK_INT<30) return "";
+
+        try{
+            ActivityManager am=(ActivityManager)getSystemService(ACTIVITY_SERVICE);
+            java.util.List<android.app.ApplicationExitInfo> list=
+                    am.getHistoricalProcessExitReasons(getPackageName(),0,5);
+
+            if(list==null || list.isEmpty()) return "没有历史退出记录";
+
+            android.app.ApplicationExitInfo e=list.get(0);
+            return "reason="+exitReasonName(e.getReason())
+                    +" ("+e.getReason()+")"
+                    +"\nstatus="+e.getStatus()
+                    +"\nimportance="+e.getImportance()
+                    +"\ndescription="+String.valueOf(e.getDescription())
+                    +"\ntimestamp="+new java.util.Date(e.getTimestamp());
+        }catch(Throwable t){
+            return "读取退出原因失败："+t.getClass().getSimpleName()+": "+t.getMessage();
+        }
+    }
+
+    String exitReasonName(int reason){
+        if(Build.VERSION.SDK_INT<30) return String.valueOf(reason);
+        switch(reason){
+            case android.app.ApplicationExitInfo.REASON_CRASH: return "CRASH";
+            case android.app.ApplicationExitInfo.REASON_CRASH_NATIVE: return "CRASH_NATIVE";
+            case android.app.ApplicationExitInfo.REASON_ANR: return "ANR";
+            case android.app.ApplicationExitInfo.REASON_LOW_MEMORY: return "LOW_MEMORY";
+            case android.app.ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE: return "EXCESSIVE_RESOURCE_USAGE";
+            case android.app.ApplicationExitInfo.REASON_USER_REQUESTED: return "USER_REQUESTED";
+            case android.app.ApplicationExitInfo.REASON_SIGNALED: return "SIGNALED";
+            case android.app.ApplicationExitInfo.REASON_OTHER: return "OTHER";
+            default: return "REASON_"+reason;
         }
     }
 
@@ -374,7 +420,7 @@ public class MainActivity extends Activity {
         @Override public void onUpdate(Context c,AppWidgetManager m,int[] ids){
             for(int id:ids){
                 RemoteViews rv=new RemoteViews(c.getPackageName(),R.layout.widget_search);
-                PendingIntent p=PendingIntent.getActivity(c,10,new Intent(c,SearchOverlayActivity.class),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+                PendingIntent p=PendingIntent.getActivity(c,10,new Intent(c,SearchActivity.class),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
                 rv.setOnClickPendingIntent(R.id.widget_root,p); m.updateAppWidget(id,rv);
             }
         }
