@@ -33,6 +33,7 @@ public class FloatingService extends Service {
 
     private View searchPanel;
     private View resultCard;
+    private boolean projectionRequestInFlight = false;
 
     private final Handler main = new Handler(Looper.getMainLooper());
 
@@ -190,6 +191,7 @@ public class FloatingService extends Service {
                         startY = bubbleLp.y;
                         downTime = System.currentTimeMillis();
                         moved = false;
+                        if (MainActivity.ScreenCaptureService.READY) projectionRequestInFlight = false;
                         removeResultCard();
                         return true;
 
@@ -202,7 +204,11 @@ public class FloatingService extends Service {
                             if (!moved) {
                                 moved = true;
                                 removeSearchPanel();
-                                showTargetBox();
+                                if (MainActivity.ScreenCaptureService.READY) {
+                                    showTargetBox();
+                                } else {
+                                    requestProjectionPermissionNow();
+                                }
                             }
                         }
 
@@ -231,7 +237,11 @@ public class FloatingService extends Service {
                             hideTargetBox();
                             toggleSearchPanel();
                         } else if (moved) {
-                            triggerPickup();
+                            if (MainActivity.ScreenCaptureService.READY && targetLp != null) {
+                                triggerPickup();
+                            } else {
+                                hideTargetBox();
+                            }
                         }
                         return true;
                 }
@@ -311,20 +321,7 @@ public class FloatingService extends Service {
         hideTargetBox();
 
         if (!MainActivity.ScreenCaptureService.READY) {
-            showResultCard(
-                    "需要屏幕取词权限",
-                    "首次使用需要系统屏幕录制授权。点这里授权，然后再拖动浮标取词。");
-
-            if (resultCard != null) {
-                resultCard.setOnClickListener(v -> {
-                    removeResultCard();
-                    Intent i = new Intent(this, MainActivity.OcrActivity.class)
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    try {
-                        startActivity(i);
-                    } catch (Exception ignored) {}
-                });
-            }
+            requestProjectionPermissionNow();
             return;
         }
 
@@ -347,11 +344,38 @@ public class FloatingService extends Service {
     }
 
     private void toggleSearchPanel() {
-        if (searchPanel != null) {
+        if (SearchOverlayActivity.VISIBLE) {
             removeSearchPanel();
             return;
         }
-        showSearchPanel();
+
+        removeResultCard();
+        Intent i = new Intent(this, SearchOverlayActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
+                        Intent.FLAG_ACTIVITY_NO_ANIMATION |
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        try {
+            startActivity(i);
+        } catch (Exception e) {
+            showResultCard("搜索页打开失败",
+                    e.getMessage() == null ? "未知错误" : e.getMessage());
+        }
+    }
+
+    private void requestProjectionPermissionNow() {
+        if (MainActivity.ScreenCaptureService.READY || projectionRequestInFlight) return;
+        projectionRequestInFlight = true;
+
+        Intent i = new Intent(this, MainActivity.OcrActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
+                        Intent.FLAG_ACTIVITY_NO_ANIMATION);
+        try {
+            startActivity(i);
+        } catch (Exception e) {
+            projectionRequestInFlight = false;
+            showResultCard("授权页打开失败",
+                    e.getMessage() == null ? "未知错误" : e.getMessage());
+        }
     }
 
     private void showSearchPanel() {
@@ -636,6 +660,11 @@ public class FloatingService extends Service {
     }
 
     private void removeSearchPanel() {
+        try {
+            sendBroadcast(new Intent(SearchOverlayActivity.ACTION_CLOSE)
+                    .setPackage(getPackageName()));
+        } catch (Exception ignored) {}
+
         if (searchPanel != null && wm != null) {
             try {
                 InputMethodManager imm =
