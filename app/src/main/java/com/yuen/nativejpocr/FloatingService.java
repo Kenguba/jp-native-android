@@ -191,7 +191,7 @@ public class FloatingService extends Service {
                         startY = bubbleLp.y;
                         downTime = System.currentTimeMillis();
                         moved = false;
-                        if (MainActivity.ScreenCaptureService.READY) projectionRequestInFlight = false;
+                        projectionRequestInFlight = false;
                         removeResultCard();
                         return true;
 
