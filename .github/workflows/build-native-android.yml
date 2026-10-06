@@ -41,7 +41,41 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Build all ABI APKs
+      - name: Detect release signing secrets
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [[ -n "$KEYSTORE_B64" && -n "$STORE_PASS" && -n "$KEY_ALIAS" && -n "$KEY_PASS" ]]; then
+            echo "HAS_SIGNING=true" >> "$GITHUB_ENV"
+            echo "VERSION_CODE=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+            echo "VERSION_NAME=0.4.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+            echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/jp-native-android-release.jks"
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/jp-native-android-release.jks" >> "$GITHUB_ENV"
+          else
+            echo "HAS_SIGNING=false" >> "$GITHUB_ENV"
+            echo "::warning::Release signing secrets are not configured. Building debug artifacts only; no GitHub Release will be published."
+          fi
+
+      - name: Build signed Release APKs
+        if: env.HAS_SIGNING == 'true'
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          gradle --no-daemon \
+            :app:assembleUniversalRelease \
+            :app:assembleArmRelease \
+            :app:assembleArm64Release \
+            :app:assembleArmv7Release
+
+      - name: Build fallback debug APKs
+        if: env.HAS_SIGNING != 'true'
         shell: bash
         run: |
           gradle --no-daemon \
@@ -50,44 +84,71 @@ jobs:
             :app:assembleArm64Debug \
             :app:assembleArmv7Debug
 
-      - name: Prepare APK files
+      - name: Prepare signed APK files
+        if: env.HAS_SIGNING == 'true'
         shell: bash
         run: |
           mkdir -p dist
+          cp app/build/outputs/apk/universal/release/app-universal-release.apk dist/jp-native-android-universal.apk
+          cp app/build/outputs/apk/arm/release/app-arm-release.apk dist/jp-native-android-arm.apk
+          cp app/build/outputs/apk/arm64/release/app-arm64-release.apk dist/jp-native-android-arm64-v8a.apk
+          cp app/build/outputs/apk/armv7/release/app-armv7-release.apk dist/jp-native-android-armeabi-v7a.apk
 
-          cp app/build/outputs/apk/universal/debug/app-universal-debug.apk \
-            dist/jp-native-android-universal.apk
-
-          cp app/build/outputs/apk/arm/debug/app-arm-debug.apk \
-            dist/jp-native-android-arm.apk
-
-          cp app/build/outputs/apk/arm64/debug/app-arm64-debug.apk \
-            dist/jp-native-android-arm64-v8a.apk
-
-          cp app/build/outputs/apk/armv7/debug/app-armv7-debug.apk \
-            dist/jp-native-android-armeabi-v7a.apk
-
-          sha256sum dist/*.apk | tee dist/SHA256SUMS.txt
-
-      - name: Show APK sizes
+      - name: Prepare fallback debug APK files
+        if: env.HAS_SIGNING != 'true'
         shell: bash
         run: |
-          ls -lh dist/*.apk
-          echo
-          cat dist/SHA256SUMS.txt
+          mkdir -p dist
+          cp app/build/outputs/apk/universal/debug/app-universal-debug.apk dist/jp-native-android-universal-UNSIGNED-DEBUG.apk
+          cp app/build/outputs/apk/arm/debug/app-arm-debug.apk dist/jp-native-android-arm-UNSIGNED-DEBUG.apk
+          cp app/build/outputs/apk/arm64/debug/app-arm64-debug.apk dist/jp-native-android-arm64-v8a-UNSIGNED-DEBUG.apk
+          cp app/build/outputs/apk/armv7/debug/app-armv7-debug.apk dist/jp-native-android-armeabi-v7a-UNSIGNED-DEBUG.apk
 
-      - name: Upload all APKs as Actions artifact
+      - name: Verify release signatures
+        if: env.HAS_SIGNING == 'true'
+        shell: bash
+        run: |
+          for apk in dist/*.apk; do
+            echo "===== $apk ====="
+            "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$apk"
+          done
+
+      - name: Create SHA-256 checksums
+        shell: bash
+        run: |
+          sha256sum dist/*.apk | tee dist/SHA256SUMS.txt
+          ls -lh dist/*.apk
+
+      - name: Upload signed Actions artifact
+        if: env.HAS_SIGNING == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: jp-native-android-build-${{ github.run_number }}
+          name: jp-native-android-signed-build-${{ github.run_number }}
+          path: |
+            dist/*.apk
+            dist/SHA256SUMS.txt
+
+      - name: Upload fallback debug artifact
+        if: env.HAS_SIGNING != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: jp-native-android-unsigned-debug-build-${{ github.run_number }}
           path: |
             dist/*.apk
             dist/SHA256SUMS.txt
 
       - name: Create Release notes
+        if: env.HAS_SIGNING == 'true'
         shell: bash
         run: |
-          cat > release-notes.md <<'EOF'
+          {
+            echo "## 版本"
+            echo
+            echo "- Version: \`$VERSION_NAME\`"
+            echo "- versionCode: \`$VERSION_CODE\`"
+            echo "- 固定签名证书 SHA-256: \`CB:8B:97:98:9B:FE:78:94:E7:96:84:2C:E5:B2:E3:E3:B2:AA:B4:8A:A7:F0:F7:A9:7C:1E:CE:04:AC:18:42:52\`"
+            echo
+            cat <<'EOF'
           ## APK 架构说明
 
           这里的 v7、v8 指的是 Android 设备的 CPU 指令集架构（ABI），不是 Android 系统版本。
@@ -101,24 +162,10 @@ jobs:
 
           ## 下载哪个 APK
 
-          - **jp-native-android-arm64-v8a.apk**  
-            只包含 `arm64-v8a`。推荐现在绝大多数 Android 手机使用，体积最小。
-
-          - **jp-native-android-armeabi-v7a.apk**  
-            只包含 `armeabi-v7a`。适合老旧 32 位 ARM 手机和平板。
-
-          - **jp-native-android-arm.apk**  
-            包含 `arm64-v8a + armeabi-v7a`。这是手机通用集合版，兼容新旧 ARM 手机。
-
-          - **jp-native-android-universal.apk**  
-            包含 `arm64-v8a + armeabi-v7a + x86 + x86_64`。全架构版，兼容性最高，但体积最大。
-
-          ### 推荐
-
-          - 新款 Android 手机：**arm64-v8a**
-          - 不确定是新 ARM 还是旧 ARM：**arm**
-          - 老旧 32 位设备：**armeabi-v7a**
-          - 模拟器 / Chromebook / 特殊设备 / 完全不确定：**universal**
+          - **jp-native-android-arm64-v8a.apk**：只包含 `arm64-v8a`，推荐现在绝大多数 Android 手机使用。
+          - **jp-native-android-armeabi-v7a.apk**：只包含 `armeabi-v7a`，适合老旧 32 位 ARM 手机和平板。
+          - **jp-native-android-arm.apk**：包含 `arm64-v8a + armeabi-v7a`，手机通用集合版。
+          - **jp-native-android-universal.apk**：包含 `arm64-v8a + armeabi-v7a + x86 + x86_64`，全架构版。
 
           x86 和 x86_64 不单独提供 APK，它们已经包含在 universal 全架构版中。
 
@@ -126,8 +173,10 @@ jobs:
 
           下载附件中的 `SHA256SUMS.txt` 可以校验 APK 完整性。
           EOF
+          } > release-notes.md
 
-      - name: Publish GitHub Release
+      - name: Publish signed GitHub Release
+        if: env.HAS_SIGNING == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -144,7 +193,7 @@ jobs:
               --clobber
 
             gh release edit "$TAG" \
-              --title "JP Native Android $TAG" \
+              --title "JP Native Android $VERSION_NAME ($TAG)" \
               --notes-file release-notes.md
           else
             gh release create "$TAG" \
@@ -154,6 +203,6 @@ jobs:
               dist/jp-native-android-universal.apk \
               dist/SHA256SUMS.txt \
               --target "$GITHUB_SHA" \
-              --title "JP Native Android $TAG" \
+              --title "JP Native Android $VERSION_NAME ($TAG)" \
               --notes-file release-notes.md
           fi
