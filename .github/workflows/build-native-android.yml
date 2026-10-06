@@ -41,6 +41,12 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Set build version
+        shell: bash
+        run: |
+          echo "VERSION_CODE=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=0.4.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+
       - name: Detect release signing secrets
         shell: bash
         env:
@@ -51,8 +57,6 @@ jobs:
         run: |
           if [[ -n "$KEYSTORE_B64" && -n "$STORE_PASS" && -n "$KEY_ALIAS" && -n "$KEY_PASS" ]]; then
             echo "HAS_SIGNING=true" >> "$GITHUB_ENV"
-            echo "VERSION_CODE=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
-            echo "VERSION_NAME=0.4.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
             echo "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/jp-native-android-release.jks"
             echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/jp-native-android-release.jks" >> "$GITHUB_ENV"
           else
