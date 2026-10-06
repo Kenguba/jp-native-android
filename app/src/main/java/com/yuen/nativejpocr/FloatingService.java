@@ -27,6 +27,7 @@ import java.util.Set;
 public class FloatingService extends Service {
     private static final String CH = "floating_lookup";
     private static final int NOTIFY_ID = 51;
+    public static final String ACTION_SHOW_SEARCH = "com.yuen.nativejpocr.SHOW_FLOATING_SEARCH";
 
     private WindowManager wm;
     private View bubble;
@@ -438,12 +439,7 @@ public class FloatingService extends Service {
         content.addView(scroll, scrollLp);
 
         int flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN |
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL |
-                WindowManager.LayoutParams.FLAG_DIM_BEHIND;
-
-        if (Build.VERSION.SDK_INT >= 31) {
-            flags |= WindowManager.LayoutParams.FLAG_BLUR_BEHIND;
-        }
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
 
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
@@ -452,19 +448,21 @@ public class FloatingService extends Service {
                 flags,
                 PixelFormat.TRANSLUCENT);
         lp.gravity = Gravity.TOP | Gravity.START;
-        lp.dimAmount = 0.16f;
         lp.softInputMode =
                 WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
                 WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN;
 
-        if (Build.VERSION.SDK_INT >= 31) {
-            try {
-                lp.setBlurBehindRadius(dp(24));
-            } catch (Throwable ignored) {}
-        }
-
         searchPanel = root;
-        wm.addView(searchPanel, lp);
+        try {
+            wm.addView(searchPanel, lp);
+        } catch (Throwable firstError) {
+            searchPanel = null;
+            showResultCard(
+                    "搜索悬浮层打开失败",
+                    firstError.getClass().getSimpleName() + ": "
+                            + (firstError.getMessage() == null ? "未知窗口错误" : firstError.getMessage()));
+            return;
+        }
 
         updateSuggestions(suggestions, "");
 
@@ -777,6 +775,14 @@ public class FloatingService extends Service {
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (bubble == null && Settings.canDrawOverlays(this)) showBubble();
+
+        if (intent != null && ACTION_SHOW_SEARCH.equals(intent.getAction())) {
+            main.post(() -> {
+                if (!Settings.canDrawOverlays(this)) return;
+                if (searchPanel == null) showSearchPanel();
+            });
+        }
+
         return START_STICKY;
     }
 
