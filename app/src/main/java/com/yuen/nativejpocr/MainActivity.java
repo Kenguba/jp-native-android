@@ -60,16 +60,15 @@ public class MainActivity extends Activity {
         buildInfo.setTextColor(0xff6f7780);
         root.addView(buildInfo);
 
-        TextView aiStatus=text("Groq AI：" +
-                (BuildConfig.GROQ_API_KEY == null || BuildConfig.GROQ_API_KEY.trim().isEmpty()
-                        ? "未配置"
-                        : "已配置"));
+        boolean hasGroqKey=GroqKeyStore.hasKey(this);
+        TextView aiStatus=text("Groq AI：" + (hasGroqKey ? "本机 Key 已配置" : "未配置"));
         aiStatus.setTextSize(14);
-        aiStatus.setTextColor(
-                BuildConfig.GROQ_API_KEY == null || BuildConfig.GROQ_API_KEY.trim().isEmpty()
-                        ? 0xffb00020
-                        : 0xff118844);
+        aiStatus.setTextColor(hasGroqKey ? 0xff118844 : 0xffb00020);
         root.addView(aiStatus);
+
+        root.addView(button(
+                hasGroqKey ? "🤖 更换 Groq Key" : "🤖 配置 Groq Key",
+                v -> GroqKeyStore.showEditor(this, this::recreate)));
 
         String lastCrash=getSharedPreferences("crash_log",MODE_PRIVATE)
                 .getString("last","");
