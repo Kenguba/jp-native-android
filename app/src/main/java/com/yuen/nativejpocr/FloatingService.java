@@ -936,11 +936,12 @@ public class FloatingService extends Service {
         return t;
     }
 
-    private TextView lookupActionIcon(String glyph, String description) {
-        TextView icon = lookupText(glyph, 30, 0xff202124);
-        icon.setGravity(Gravity.CENTER);
+    private ImageView lookupIcon(int drawable, String description, int tint) {
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(drawable);
+        icon.setColorFilter(tint);
         icon.setContentDescription(description);
-        icon.setIncludeFontPadding(false);
+        icon.setPadding(dp(10), dp(10), dp(10), dp(10));
         return icon;
     }
 
@@ -965,61 +966,68 @@ public class FloatingService extends Service {
 
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setBackground(outline(0x14000000, 1, Color.WHITE, 14));
-        panel.setElevation(dp(18));
+        panel.setBackground(outline(0x16000000, 1, Color.WHITE, 10));
+        panel.setElevation(dp(12));
 
-        // Header: headword + four compact outline-style actions, matching
-        // the reference popup's visual rhythm.
+        // Reference proportions: compact 48dp header, 46dp pronunciation row,
+        // 40dp dictionary headers, and a plain 30dp footer.
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(18), dp(7), dp(8), dp(6));
+        header.setPadding(dp(14), 0, dp(4), 0);
 
-        TextView title = lookupText(q, 27, 0xff202124);
+        TextView title = lookupText(q, 20, 0xff242629);
         title.setSingleLine(true);
         title.setEllipsize(android.text.TextUtils.TruncateAt.END);
         title.setGravity(Gravity.CENTER_VERTICAL);
-        header.addView(title, new LinearLayout.LayoutParams(0, dp(62), 1));
+        title.setIncludeFontPadding(false);
+        header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
 
-        TextView favorite = lookupActionIcon("☆", "收藏");
-        TextView replay = lookupActionIcon("◷", "重新查询");
-        TextView list = lookupActionIcon("☷", "词典列表");
-        TextView more = lookupActionIcon("✚", "更多");
-        TextView[] actions = new TextView[]{favorite, replay, list, more};
-        for (TextView action : actions) {
-            header.addView(action, new LinearLayout.LayoutParams(dp(52), dp(58)));
+        ImageView favorite = lookupIcon(
+                R.drawable.ic_lookup_star, "收藏", 0xff242629);
+        ImageView replay = lookupIcon(
+                R.drawable.ic_lookup_replay, "重新查询", 0xff242629);
+        ImageView list = lookupIcon(
+                R.drawable.ic_lookup_list, "词典列表", 0xff242629);
+        ImageView more = lookupIcon(
+                R.drawable.ic_lookup_plus, "更多", 0xff242629);
+
+        ImageView[] actions = new ImageView[]{favorite, replay, list, more};
+        for (ImageView action : actions) {
+            header.addView(action, new LinearLayout.LayoutParams(dp(44), dp(48)));
         }
 
         replay.setOnClickListener(v -> {
             LOOKUP_AI_CACHE.remove(q);
             showLookupOverlay(q, returnToSearch);
         });
-        more.setOnClickListener(v -> closeLookupOverlay());
 
         panel.addView(header, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(72)));
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
 
-        View divider = new View(this);
-        divider.setBackgroundColor(0xffeceef0);
-        panel.addView(divider, new LinearLayout.LayoutParams(
+        View topDivider = new View(this);
+        topDivider.setBackgroundColor(0xffeeeeef);
+        panel.addView(topDivider, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(1)));
 
         LinearLayout pronunciation = new LinearLayout(this);
         pronunciation.setOrientation(LinearLayout.HORIZONTAL);
         pronunciation.setGravity(Gravity.CENTER_VERTICAL);
-        pronunciation.setPadding(dp(18), 0, dp(18), 0);
+        pronunciation.setPadding(dp(14), 0, dp(14), 0);
 
-        TextView speaker = lookupText("🔊", 22, 0xff05a8ef);
-        speaker.setGravity(Gravity.CENTER_VERTICAL);
-        pronunciation.addView(speaker, new LinearLayout.LayoutParams(dp(36), dp(56)));
+        ImageView speaker = lookupIcon(
+                R.drawable.ic_lookup_speaker, "发音", 0xff00a7eb);
+        speaker.setPadding(dp(2), dp(10), dp(8), dp(10));
+        pronunciation.addView(speaker, new LinearLayout.LayoutParams(dp(34), dp(46)));
 
-        TextView pronounceLabel = lookupText("发音", 18, 0xff777b80);
+        TextView pronounceLabel = lookupText("发音", 16, 0xff777b80);
         pronounceLabel.setGravity(Gravity.CENTER_VERTICAL);
+        pronounceLabel.setIncludeFontPadding(false);
         pronunciation.addView(pronounceLabel, new LinearLayout.LayoutParams(
-                0, dp(56), 1));
+                0, dp(46), 1));
 
         panel.addView(pronunciation, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(58)));
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(46)));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(false);
@@ -1028,118 +1036,124 @@ public class FloatingService extends Service {
 
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(0, 0, 0, dp(28));
+        content.setPadding(0, 0, 0, 0);
         scroll.addView(content, new ScrollView.LayoutParams(
                 ScrollView.LayoutParams.MATCH_PARENT,
                 ScrollView.LayoutParams.WRAP_CONTENT));
 
-        // First section: same gray header + white/light-gray content hierarchy
-        // as the reference dictionary overlay.
         LinearLayout localBody = new LinearLayout(this);
         localBody.setOrientation(LinearLayout.VERTICAL);
-        localBody.setPadding(dp(26), dp(18), dp(26), dp(18));
+        localBody.setPadding(dp(14), dp(12), dp(14), dp(12));
         localBody.setBackgroundColor(Color.WHITE);
 
-        String[] local = findLocalLookup(q);
         LinearLayout summaryCard = new LinearLayout(this);
         summaryCard.setOrientation(LinearLayout.VERTICAL);
-        summaryCard.setPadding(dp(20), dp(17), dp(20), dp(18));
-        summaryCard.setBackground(bg(0xfff4f4f5, 12));
+        summaryCard.setPadding(dp(13), dp(12), dp(13), dp(13));
+        summaryCard.setBackground(bg(0xfff4f4f4, 10));
+        summaryCard.setMinimumHeight(dp(96));
 
+        String[] local = findLocalLookup(q);
         if (local != null) {
-            TextView word = lookupText(q, 24, 0xff202124);
+            TextView word = lookupText(q, 18, 0xff202124);
             word.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
+            word.setIncludeFontPadding(false);
             summaryCard.addView(word);
 
             TextView meta = lookupText(
                     local[0] + "   " + local[1] + "   " + local[2],
-                    14,
-                    0xff696d72);
-            meta.setPadding(0, dp(7), 0, dp(10));
+                    13,
+                    0xff6f7378);
+            meta.setPadding(0, dp(6), 0, dp(7));
+            meta.setIncludeFontPadding(false);
             summaryCard.addView(meta);
 
-            TextView meaning = lookupText(local[3], 18, 0xff222426);
-            meaning.setLineSpacing(dp(3), 1f);
+            TextView meaning = lookupText(local[3], 16, 0xff25272a);
+            meaning.setLineSpacing(dp(2), 1f);
+            meaning.setIncludeFontPadding(false);
             summaryCard.addView(meaning);
         } else {
-            TextView emptyTitle = lookupText("暂无本地词条", 17, 0xff303236);
-            summaryCard.addView(emptyTitle);
-
-            TextView emptyBody = lookupText(
-                    "原始 OCR 文本会继续交由 Groq AI 分析。",
-                    15,
-                    0xff6e7277);
-            emptyBody.setPadding(0, dp(10), 0, 0);
-            summaryCard.addView(emptyBody);
+            TextView empty = lookupText("暂无笔记", 16, 0xff303236);
+            empty.setIncludeFontPadding(false);
+            summaryCard.addView(empty);
         }
 
         localBody.addView(summaryCard, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        addLookupSection(content, "日语单词总汇", localBody);
+        addLookupSection(content, "日语单词总汇", localBody, true);
 
-        // AI section rendered with the same dictionary-section shell.
         LinearLayout aiBodyBox = new LinearLayout(this);
         aiBodyBox.setOrientation(LinearLayout.VERTICAL);
-        aiBodyBox.setPadding(dp(26), dp(16), dp(26), dp(18));
+        aiBodyBox.setPadding(dp(14), dp(10), dp(14), dp(12));
         aiBodyBox.setBackgroundColor(Color.WHITE);
 
         ProgressBar progress = new ProgressBar(this);
         progress.setIndeterminate(true);
-        aiBodyBox.addView(progress, new LinearLayout.LayoutParams(dp(28), dp(28)));
+        aiBodyBox.addView(progress, new LinearLayout.LayoutParams(dp(24), dp(24)));
 
-        TextView aiBody = lookupText("正在查询 AI…", 17, 0xff25272a);
-        aiBody.setPadding(0, dp(10), 0, 0);
-        aiBody.setLineSpacing(dp(5), 1f);
+        TextView aiBody = lookupText("正在查询 AI…", 15, 0xff25272a);
+        aiBody.setPadding(0, dp(7), 0, 0);
+        aiBody.setLineSpacing(dp(3), 1f);
         aiBody.setTextIsSelectable(true);
+        aiBody.setIncludeFontPadding(false);
         aiBodyBox.addView(aiBody, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        addLookupSection(content, "Groq AI", aiBodyBox);
-
-        TextView footer = lookupText("© JP Native Android", 13, 0xff777b80);
-        footer.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        footer.setPadding(dp(16), dp(10), dp(18), dp(10));
-        content.addView(footer, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(42)));
+        addLookupSection(content, "Groq AI", aiBodyBox, true);
 
         panel.addView(scroll, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1));
 
-        // A full-width bottom resize zone. The visible pill is only the cue;
-        // the whole lower strip can be dragged vertically.
-        FrameLayout bottomGrip = new FrameLayout(this);
-        bottomGrip.setBackgroundColor(Color.WHITE);
-        bottomGrip.setContentDescription("上下拖动调整查词浮层高度");
+        // The reference has no visible resize handle. The footer itself is
+        // the resize hit target, while still looking like a normal footer.
+        LinearLayout footer = new LinearLayout(this);
+        footer.setOrientation(LinearLayout.HORIZONTAL);
+        footer.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+        footer.setPadding(dp(10), 0, dp(8), 0);
+        footer.setBackgroundColor(Color.WHITE);
+        footer.setContentDescription("拖动调整查词浮层大小");
 
-        View gripPill = new View(this);
-        gripPill.setBackground(bg(0xffc8ccd1, 3));
-        FrameLayout.LayoutParams pillLp = new FrameLayout.LayoutParams(dp(44), dp(5));
-        pillLp.gravity = Gravity.CENTER;
-        bottomGrip.addView(gripPill, pillLp);
+        TextView copyright = lookupText("© JP Native Android", 12, 0xff777b80);
+        copyright.setGravity(Gravity.CENTER_VERTICAL | Gravity.END);
+        copyright.setIncludeFontPadding(false);
+        footer.addView(copyright, new LinearLayout.LayoutParams(0, dp(30), 1));
 
-        panel.addView(bottomGrip, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(28)));
+        TextView badge = lookupText("あ", 12, Color.WHITE);
+        badge.setGravity(Gravity.CENTER);
+        badge.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        badge.setBackground(bg(0xff129fe8, 4));
+        LinearLayout.LayoutParams badgeLp =
+                new LinearLayout.LayoutParams(dp(18), dp(18));
+        badgeLp.leftMargin = dp(7);
+        footer.addView(badge, badgeLp);
+
+        panel.addView(footer, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(30)));
 
         root.addView(panel, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT));
 
         DisplayMetrics dm = getResources().getDisplayMetrics();
-        int sideMargin = dp(12);
-        int width = Math.max(dp(280), dm.widthPixels - sideMargin * 2);
-        int minHeight = dp(330);
-        int maxHeight = Math.max(minHeight, dm.heightPixels - dp(72));
+        SharedPreferences prefs = getSharedPreferences(LOOKUP_WINDOW_PREFS, MODE_PRIVATE);
+
+        int minWidth = dp(250);
+        int minHeight = dp(300);
+        int maxWidth = Math.max(minWidth, dm.widthPixels - dp(8));
+        int maxHeight = Math.max(minHeight, dm.heightPixels - dp(48));
+
+        int defaultWidth = Math.min(maxWidth, dm.widthPixels - dp(16));
         int defaultHeight = Math.min(maxHeight, Math.round(dm.heightPixels * 0.72f));
 
-        SharedPreferences prefs = getSharedPreferences(LOOKUP_WINDOW_PREFS, MODE_PRIVATE);
+        int width = clampLookup(
+                prefs.getInt(LOOKUP_WIDTH, defaultWidth), minWidth, maxWidth);
         int height = clampLookup(
                 prefs.getInt(LOOKUP_HEIGHT, defaultHeight), minHeight, maxHeight);
 
-        int defaultX = sideMargin;
-        int defaultY = Math.max(dp(16), Math.min(dp(88), (dm.heightPixels - height) / 3));
+        int defaultX = Math.max(dp(4), (dm.widthPixels - width) / 2);
+        int defaultY = dp(52);
 
         lookupOverlayLp = new WindowManager.LayoutParams(
                 width,
@@ -1149,12 +1163,12 @@ public class FloatingService extends Service {
                         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                 PixelFormat.TRANSLUCENT);
         lookupOverlayLp.gravity = Gravity.TOP | Gravity.START;
-        lookupOverlayLp.x = defaultX;
+        lookupOverlayLp.x = prefs.getInt(LOOKUP_X, defaultX);
         lookupOverlayLp.y = prefs.getInt(LOOKUP_Y, defaultY);
         clampLookupBounds(lookupOverlayLp, dm.widthPixels, dm.heightPixels);
 
         lookupOverlay = root;
-        installLookupOverlayGestures(header, title, bottomGrip);
+        installLookupOverlayGestures(header, title, footer);
 
         try {
             wm.addView(root, lookupOverlayLp);
@@ -1172,22 +1186,28 @@ public class FloatingService extends Service {
     private void addLookupSection(
             LinearLayout parent,
             String label,
-            View sectionBody) {
+            View sectionBody,
+            boolean expanded) {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(dp(18), dp(4), dp(12), dp(4));
-        row.setBackgroundColor(0xfff3f4f5);
+        row.setPadding(dp(14), 0, dp(8), 0);
+        row.setBackgroundColor(0xfff4f5f6);
 
-        TextView t = lookupText(label, 17, 0xff303236);
+        TextView t = lookupText(label, 15, 0xff34373b);
         t.setGravity(Gravity.CENTER_VERTICAL);
-        row.addView(t, new LinearLayout.LayoutParams(0, dp(48), 1));
+        t.setIncludeFontPadding(false);
+        row.addView(t, new LinearLayout.LayoutParams(0, dp(40), 1));
 
-        TextView arrow = lookupText("⌃", 20, 0xffb3b7bc);
-        arrow.setGravity(Gravity.CENTER);
-        row.addView(arrow, new LinearLayout.LayoutParams(dp(42), dp(48)));
+        ImageView arrow = lookupIcon(
+                R.drawable.ic_lookup_arrow_up, "折叠", 0xffb4b7bb);
+        arrow.setPadding(dp(12), dp(12), dp(12), dp(12));
+        row.addView(arrow, new LinearLayout.LayoutParams(dp(40), dp(40)));
+
+        sectionBody.setVisibility(expanded ? View.VISIBLE : View.GONE);
+        arrow.setRotation(expanded ? 0f : 180f);
 
         parent.addView(row, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(56)));
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(40)));
         parent.addView(sectionBody, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT));
@@ -1195,7 +1215,7 @@ public class FloatingService extends Service {
         row.setOnClickListener(v -> {
             boolean collapse = sectionBody.getVisibility() == View.VISIBLE;
             sectionBody.setVisibility(collapse ? View.GONE : View.VISIBLE);
-            arrow.setText(collapse ? "⌄" : "⌃");
+            arrow.animate().rotation(collapse ? 180f : 0f).setDuration(120L).start();
         });
     }
 
@@ -1268,7 +1288,7 @@ public class FloatingService extends Service {
     private void installLookupOverlayGestures(
             View header,
             View title,
-            View bottomGrip) {
+            View resizeFooter) {
         View.OnTouchListener drag = new View.OnTouchListener() {
             float downRawX;
             float downRawY;
@@ -1313,8 +1333,10 @@ public class FloatingService extends Service {
         header.setOnTouchListener(drag);
         title.setOnTouchListener(drag);
 
-        bottomGrip.setOnTouchListener(new View.OnTouchListener() {
+        resizeFooter.setOnTouchListener(new View.OnTouchListener() {
+            float downRawX;
             float downRawY;
+            int startWidth;
             int startHeight;
 
             @Override public boolean onTouch(View v, MotionEvent e) {
@@ -1322,20 +1344,33 @@ public class FloatingService extends Service {
 
                 switch (e.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
+                        downRawX = e.getRawX();
                         downRawY = e.getRawY();
+                        startWidth = lookupOverlayLp.width;
                         startHeight = lookupOverlayLp.height;
                         return true;
 
                     case MotionEvent.ACTION_MOVE:
                         DisplayMetrics dm = getResources().getDisplayMetrics();
-                        int minHeight = dp(330);
-                        int maxHeight = Math.max(minHeight, dm.heightPixels - dp(72));
+                        int minWidth = dp(250);
+                        int minHeight = dp(300);
+                        int maxWidth = Math.max(minWidth, dm.widthPixels - dp(8));
+                        int maxHeight = Math.max(minHeight, dm.heightPixels - dp(48));
+
+                        // The bottom strip behaves like the reference popup:
+                        // dragging left/right changes width, up/down changes height,
+                        // while the top-left corner remains anchored.
+                        lookupOverlayLp.width = clampLookup(
+                                startWidth + Math.round(e.getRawX() - downRawX),
+                                minWidth,
+                                maxWidth);
                         lookupOverlayLp.height = clampLookup(
                                 startHeight + Math.round(e.getRawY() - downRawY),
                                 minHeight,
                                 maxHeight);
                         clampLookupBounds(
                                 lookupOverlayLp, dm.widthPixels, dm.heightPixels);
+
                         try {
                             wm.updateViewLayout(lookupOverlay, lookupOverlayLp);
                         } catch (Exception ignored) {}
@@ -1373,7 +1408,9 @@ public class FloatingService extends Service {
 
         getSharedPreferences(LOOKUP_WINDOW_PREFS, MODE_PRIVATE)
                 .edit()
+                .putInt(LOOKUP_WIDTH, lookupOverlayLp.width)
                 .putInt(LOOKUP_HEIGHT, lookupOverlayLp.height)
+                .putInt(LOOKUP_X, lookupOverlayLp.x)
                 .putInt(LOOKUP_Y, lookupOverlayLp.y)
                 .apply();
     }
