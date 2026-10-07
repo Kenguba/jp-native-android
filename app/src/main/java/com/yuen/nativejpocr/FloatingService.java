@@ -173,6 +173,73 @@ public class FloatingService extends Service {
         return g;
     }
 
+    private final class BackGestureFrameLayout extends FrameLayout {
+        private float downX;
+        private float downY;
+        private boolean trackingEdge;
+
+        BackGestureFrameLayout(Context context) {
+            super(context);
+            setFocusableInTouchMode(true);
+        }
+
+        private boolean isFromEdge(float x) {
+            int edge = dp(34);
+            return x <= edge || x >= Math.max(edge, getWidth() - edge);
+        }
+
+        private boolean isBackDistance(float x, float y) {
+            float dx = x - downX;
+            float dy = y - downY;
+            boolean inward = downX <= dp(34) ? dx >= dp(72) : dx <= -dp(72);
+            return inward && Math.abs(dx) > Math.abs(dy) * 1.15f;
+        }
+
+        @Override public boolean onInterceptTouchEvent(MotionEvent e) {
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    downX = e.getX();
+                    downY = e.getY();
+                    trackingEdge = isFromEdge(downX);
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    if (trackingEdge && isBackDistance(e.getX(), e.getY())) {
+                        return true;
+                    }
+                    break;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    trackingEdge = false;
+                    break;
+            }
+            return false;
+        }
+
+        @Override public boolean onTouchEvent(MotionEvent e) {
+            if (!trackingEdge && e.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                downX = e.getX();
+                downY = e.getY();
+                trackingEdge = isFromEdge(downX);
+            }
+
+            if (trackingEdge &&
+                    (e.getActionMasked() == MotionEvent.ACTION_MOVE ||
+                     e.getActionMasked() == MotionEvent.ACTION_UP) &&
+                    isBackDistance(e.getX(), e.getY())) {
+                markAction("SEARCH_EDGE_BACK");
+                removeSearchPanel();
+                trackingEdge = false;
+                return true;
+            }
+
+            if (e.getActionMasked() == MotionEvent.ACTION_UP ||
+                    e.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                trackingEdge = false;
+            }
+            return trackingEdge || super.onTouchEvent(e);
+        }
+    }
+
     private void showBubble() {
         if (bubble != null) return;
 
@@ -431,9 +498,18 @@ public class FloatingService extends Service {
 
         removeResultCard();
 
-        FrameLayout root = new FrameLayout(this);
+        BackGestureFrameLayout root = new BackGestureFrameLayout(this);
         root.setBackgroundColor(0x8a101820);
         root.setFocusableInTouchMode(true);
+        root.setOnKeyListener((v, keyCode, event) -> {
+            if (keyCode == KeyEvent.KEYCODE_BACK &&
+                    event.getAction() == KeyEvent.ACTION_UP) {
+                markAction("SEARCH_KEY_BACK");
+                removeSearchPanel();
+                return true;
+            }
+            return false;
+        });
 
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
@@ -550,6 +626,16 @@ public class FloatingService extends Service {
             InputMethodManager imm =
                     (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
             imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
+        });
+
+        input.setOnKeyListener((v, keyCode, event) -> {
+            if (keyCode == KeyEvent.KEYCODE_BACK &&
+                    event.getAction() == KeyEvent.ACTION_UP) {
+                markAction("SEARCH_INPUT_BACK");
+                removeSearchPanel();
+                return true;
+            }
+            return false;
         });
 
         mic.setOnClickListener(v ->
