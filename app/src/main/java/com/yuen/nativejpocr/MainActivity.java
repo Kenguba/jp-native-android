@@ -24,14 +24,8 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.*;
 import android.widget.RemoteViews;
 
-import com.google.mlkit.vision.common.InputImage;
-import com.google.mlkit.vision.text.TextRecognition;
-import com.google.mlkit.vision.text.TextRecognizer;
-import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions;
-
 import java.nio.ByteBuffer;
 import java.util.*;
-import java.util.regex.*;
 
 public class MainActivity extends Activity {
 
@@ -438,25 +432,37 @@ public class MainActivity extends Activity {
         }
 
         void recognize(Bitmap bmp, boolean region){
-            TextRecognizer r=TextRecognition.getClient(new JapaneseTextRecognizerOptions.Builder().build());
-            r.process(InputImage.fromBitmap(bmp,0)).addOnSuccessListener(t->{
-                String q=firstJapaneseToken(t.getText());
-                if(q==null) q=t.getText().trim();
-                if(q.length()>40) q=q.substring(0,40);
+            MultilingualOcrRecognizer.recognize(
+                    bmp,
+                    new MultilingualOcrRecognizer.Callback() {
+                        @Override public void onSuccess(String q) {
+                            try {
+                                if(region){
+                                    sendOcrResult(q,null);
+                                }else{
+                                    Intent i=new Intent(ScreenCaptureService.this,SearchActivity.class)
+                                            .putExtra("query",q)
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP);
+                                    try{ startActivity(i); }catch(Exception e){ postResult(q); }
+                                }
+                            } finally {
+                                try{ bmp.recycle(); }catch(Exception ignored){}
+                            }
+                        }
 
-                if(region){
-                    sendOcrResult(q,null);
-                }else{
-                    Intent i=new Intent(this,SearchActivity.class).putExtra("query",q).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                    try{ startActivity(i); }catch(Exception e){ postResult(q); }
-                }
-            }).addOnFailureListener(e->{
-                if(region) sendOcrResult(null,"OCR 失败："+e.getMessage());
-                else Toast.makeText(this,"OCR 失败："+e.getMessage(),Toast.LENGTH_LONG).show();
-            }).addOnCompleteListener(x->{
-                r.close();
-                try{ bmp.recycle(); }catch(Exception ignored){}
-            });
+                        @Override public void onFailure(Exception e) {
+                            try {
+                                String message=e==null || e.getMessage()==null
+                                        ? "没有识别到文字"
+                                        : e.getMessage();
+                                if(region) sendOcrResult(null,"OCR 失败："+message);
+                                else Toast.makeText(ScreenCaptureService.this,
+                                        "OCR 失败："+message,Toast.LENGTH_LONG).show();
+                            } finally {
+                                try{ bmp.recycle(); }catch(Exception ignored){}
+                            }
+                        }
+                    });
         }
 
         void sendOcrResult(String text,String error){
@@ -470,11 +476,6 @@ public class MainActivity extends Activity {
             PendingIntent p=PendingIntent.getActivity(this,3,i,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
             Notification n=new Notification.Builder(this,CH).setSmallIcon(android.R.drawable.ic_menu_search).setContentTitle("OCR 识别结果").setContentText(q).setContentIntent(p).setAutoCancel(true).build();
             ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(43,n);
-        }
-        static String firstJapaneseToken(String s){
-            if(s==null)return null;
-            Matcher m=Pattern.compile("[\\u3040-\\u30ff\\u3400-\\u9fff々〆ヵヶー]{1,24}").matcher(s);
-            return m.find()?m.group():null;
         }
         void stopCapture(){
             VirtualDisplay v=vd; vd=null;
