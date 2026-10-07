@@ -17,6 +17,7 @@ import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.*;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -61,6 +62,7 @@ public class FloatingService extends Service {
     private WindowManager.LayoutParams lookupOverlayLp;
     private String lookupOverlayQuery = "";
     private boolean lookupOverlayReturnToSearch;
+    private final ArrayDeque<String> lookupRouteStack = new ArrayDeque<>();
     private String currentSearchQuery = "";
     private boolean projectionRequestInFlight = false;
     private android.window.OnBackInvokedDispatcher searchBackDispatcher;
@@ -266,6 +268,88 @@ public class FloatingService extends Service {
                 trackingEdge = false;
             }
             return trackingEdge || super.onTouchEvent(e);
+        }
+    }
+
+    private final class LookupOverlayFrameLayout extends FrameLayout {
+        private float edgeDownX;
+        private float edgeDownY;
+        private boolean trackingLeftBack;
+        private boolean backConsumed;
+
+        LookupOverlayFrameLayout(Context context) {
+            super(context);
+            setFocusable(true);
+            setFocusableInTouchMode(true);
+        }
+
+        private boolean isBackSwipe(float x, float y) {
+            float dx = x - edgeDownX;
+            float dy = y - edgeDownY;
+            return dx >= dp(70) && Math.abs(dx) > Math.abs(dy) * 1.15f;
+        }
+
+        @Override public boolean dispatchKeyEvent(KeyEvent event) {
+            if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+                if (event.getAction() == KeyEvent.ACTION_UP &&
+                        event.getRepeatCount() == 0) {
+                    handleLookupBack();
+                }
+                return true;
+            }
+            return super.dispatchKeyEvent(event);
+        }
+
+        @Override public boolean onInterceptTouchEvent(MotionEvent event) {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    edgeDownX = event.getX();
+                    edgeDownY = event.getY();
+                    trackingLeftBack = edgeDownX <= dp(28);
+                    backConsumed = false;
+                    break;
+
+                case MotionEvent.ACTION_MOVE:
+                    if (trackingLeftBack &&
+                            !backConsumed &&
+                            isBackSwipe(event.getX(), event.getY())) {
+                        backConsumed = true;
+                        return true;
+                    }
+                    break;
+
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    trackingLeftBack = false;
+                    backConsumed = false;
+                    break;
+            }
+            return false;
+        }
+
+        @Override public boolean onTouchEvent(MotionEvent event) {
+            if (trackingLeftBack && !backConsumed &&
+                    event.getActionMasked() == MotionEvent.ACTION_MOVE &&
+                    isBackSwipe(event.getX(), event.getY())) {
+                backConsumed = true;
+            }
+
+            if (backConsumed &&
+                    (event.getActionMasked() == MotionEvent.ACTION_UP ||
+                     event.getActionMasked() == MotionEvent.ACTION_MOVE)) {
+                handleLookupBack();
+                trackingLeftBack = false;
+                backConsumed = false;
+                return true;
+            }
+
+            if (event.getActionMasked() == MotionEvent.ACTION_UP ||
+                    event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+                trackingLeftBack = false;
+                backConsumed = false;
+            }
+
+            return trackingLeftBack || backConsumed || super.onTouchEvent(event);
         }
     }
 
@@ -946,6 +1030,13 @@ public class FloatingService extends Service {
     }
 
     private void showLookupOverlay(String rawQuery, boolean returnToSearch) {
+        showLookupOverlay(rawQuery, returnToSearch, true);
+    }
+
+    private void showLookupOverlay(
+            String rawQuery,
+            boolean returnToSearch,
+            boolean pushCurrentRoute) {
         if (!Settings.canDrawOverlays(this) || wm == null) {
             safeToast("没有悬浮窗权限，无法显示查词浮层");
             return;
@@ -953,6 +1044,19 @@ public class FloatingService extends Service {
 
         String q = rawQuery == null ? "" : rawQuery.trim();
         if (q.isEmpty()) return;
+
+        String previousQuery = lookupOverlayQuery == null
+                ? ""
+                : lookupOverlayQuery.trim();
+        if (pushCurrentRoute &&
+                lookupOverlay != null &&
+                !previousQuery.isEmpty() &&
+                !previousQuery.equals(q)) {
+            lookupRouteStack.addLast(previousQuery);
+            while (lookupRouteStack.size() > 32) {
+                lookupRouteStack.removeFirst();
+            }
+        }
 
         removeLookupOverlay(false);
         removeSearchPanel();
@@ -962,7 +1066,7 @@ public class FloatingService extends Service {
         lookupOverlayReturnToSearch = returnToSearch;
         saveLookupHistory(q);
 
-        FrameLayout root = new FrameLayout(this);
+        LookupOverlayFrameLayout root = new LookupOverlayFrameLayout(this);
 
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
@@ -1159,8 +1263,7 @@ public class FloatingService extends Service {
                 width,
                 height,
                 overlayType(),
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                 PixelFormat.TRANSLUCENT);
         lookupOverlayLp.gravity = Gravity.TOP | Gravity.START;
         lookupOverlayLp.x = prefs.getInt(LOOKUP_X, defaultX);
@@ -1172,6 +1275,10 @@ public class FloatingService extends Service {
 
         try {
             wm.addView(root, lookupOverlayLp);
+            root.requestFocus();
+            // The blue floating lookup bubble must stay visually above
+            // the dictionary overlay, matching the reference behavior.
+            bringBubbleToFront();
         } catch (Throwable e) {
             lookupOverlay = null;
             lookupOverlayLp = null;
@@ -1449,8 +1556,23 @@ public class FloatingService extends Service {
                 .apply();
     }
 
+    private boolean handleLookupBack() {
+        if (lookupOverlay == null) return false;
+
+        if (!lookupRouteStack.isEmpty()) {
+            String previous = lookupRouteStack.removeLast();
+            markAction("LOOKUP_ROUTE_BACK:" + previous);
+            showLookupOverlay(previous, lookupOverlayReturnToSearch, false);
+        } else {
+            markAction("LOOKUP_ROUTE_EMPTY_CLOSE");
+            closeLookupOverlay();
+        }
+        return true;
+    }
+
     private void closeLookupOverlay() {
         boolean restoreSearch = lookupOverlayReturnToSearch;
+        lookupRouteStack.clear();
         removeLookupOverlay(false);
 
         if (restoreSearch) {
@@ -1475,7 +1597,10 @@ public class FloatingService extends Service {
         lookupOverlayLp = null;
         lookupOverlayQuery = "";
 
-        if (clearRestoreState) lookupOverlayReturnToSearch = false;
+        if (clearRestoreState) {
+            lookupOverlayReturnToSearch = false;
+            lookupRouteStack.clear();
+        }
     }
 
     private void showResultCard(String title, String body) {

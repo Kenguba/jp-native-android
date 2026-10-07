@@ -235,6 +235,8 @@ APK 文件名固定格式：
 - 交互固定：轻点悬浮球进入桌面全局搜索；拖拽悬浮球进行区域 OCR，识别成功后必须直接打开查词弹窗，不得先进入或回落到桌面全局搜索层
 - 全局悬浮搜索应保留当前桌面或应用的系统状态栏，不重新绘制或侵占系统状态栏；OCR 查词结果必须通过显式 Intent 触发 `FloatingService.ACTION_SHOW_LOOKUP_OVERLAY`，由 `WindowManager.TYPE_APPLICATION_OVERLAY` 直接显示在当前桌面或前台 App 上方，禁止为了 OCR 查词启动 `QuickLookupActivity`、切换 Activity 或切换任务栈
 - OCR 查词 WindowManager 浮层以用户提供的欧路词典参考图/视频为 UI 基准：紧凑白色圆角卡片、词头 + 四个黑色描边操作图标、独立发音行、40dp 左右的浅灰词典分区头、白色内容区和无额外装饰的底部版权栏；禁止使用 Unicode 字符冒充主要工具栏图标。参考视频中的灰色圆点属于触摸指示器，不得做成可见抓手。顶部标题区可拖动窗口；底部版权栏整条区域作为隐形缩放热区，横向拖动改变宽度、纵向拖动改变高度，左上角保持锚定，并持久化窗口 x/y/宽/高
+- Intent 查词浮层必须自己消费左侧返回手势和系统/实体返回键，不能让返回事件直接穿透到底层 App；浮层维护查询路由栈，有上一条查询时先返回上一条，路由栈为空时才关闭浮层。蓝色悬浮球必须始终位于查词浮层的最上层
+- 对外查询 Deep Link 固定为 `jp-native://lookup?q=<URL编码后的查询内容>`；由无界面的 `LookupLinkActivity` 接收后转发到 `FloatingService.ACTION_SHOW_LOOKUP_OVERLAY`，Deep Link 本身不得渲染或切换到查词 Activity 页面
 - OCR 层仅负责识别文字和返回尽量完整的原始识别文本，禁止只提取首个词、提前截取 40 字、强制判定语种或改写原文；OCR 四种文字脚本的结果选取属于识别任务，不属于语言语义判断
 - OCR 的 Latin / Chinese / Japanese / Korean `TextRecognizer` 必须跟随 `ScreenCaptureService` 生命周期复用，禁止每次框选识别都重新创建并立即销毁；Service 退出时统一释放，仍在执行的识别完成后再安全关闭
 - Groq 接收原始 OCR 文本作为用户消息，独立判断输入属于中文、日文、韩文、英文、混合文本或不确定语种；按实际语种解释，不得预设为日语或强制翻译成日语
