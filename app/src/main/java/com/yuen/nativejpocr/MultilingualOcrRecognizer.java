@@ -14,10 +14,10 @@ import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions;
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 
 /**
- * OCR-only facade for Latin, Chinese, Japanese and Korean scripts.
+ * Reusable OCR-only facade for Latin, Chinese, Japanese and Korean scripts.
  * Recognition models are provided by Google Play services to keep APK size low.
  */
-final class MultilingualOcrRecognizer {
+final class MultilingualOcrRecognizer implements AutoCloseable {
     interface Callback {
         void onSuccess(String text);
         void onFailure(Exception error);
@@ -30,84 +30,134 @@ final class MultilingualOcrRecognizer {
         KOREAN
     }
 
-    private MultilingualOcrRecognizer() {}
+    private final Object lifecycleLock = new Object();
+    private final TextRecognizer latin;
+    private final TextRecognizer chinese;
+    private final TextRecognizer japanese;
+    private final TextRecognizer korean;
 
-    static void recognize(Bitmap bitmap, Callback callback) {
-        InputImage image = InputImage.fromBitmap(bitmap, 0);
+    private int inFlight;
+    private boolean closeRequested;
+    private boolean closed;
 
-        TextRecognizer latin = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
-        TextRecognizer chinese = TextRecognition.getClient(
+    MultilingualOcrRecognizer() {
+        latin = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+        chinese = TextRecognition.getClient(
                 new ChineseTextRecognizerOptions.Builder().build());
-        TextRecognizer japanese = TextRecognition.getClient(
+        japanese = TextRecognition.getClient(
                 new JapaneseTextRecognizerOptions.Builder().build());
-        TextRecognizer korean = TextRecognition.getClient(
+        korean = TextRecognition.getClient(
                 new KoreanTextRecognizerOptions.Builder().build());
+    }
 
-        Task<Text> latinTask = latin.process(image);
-        Task<Text> chineseTask = chinese.process(image);
-        Task<Text> japaneseTask = japanese.process(image);
-        Task<Text> koreanTask = korean.process(image);
+    void recognize(Bitmap bitmap, Callback callback) {
+        synchronized (lifecycleLock) {
+            if (closeRequested || closed) {
+                callback.onFailure(new IllegalStateException("OCR 识别器已关闭"));
+                return;
+            }
+            inFlight++;
+        }
 
-        Tasks.whenAllComplete(latinTask, chineseTask, japaneseTask, koreanTask)
-                .addOnCompleteListener(ignored -> {
-                    try {
-                        String best = "";
-                        int bestScore = Integer.MIN_VALUE;
+        try {
+            InputImage image = InputImage.fromBitmap(bitmap, 0);
 
-                        if (latinTask.isSuccessful()) {
-                            String value = textOf(latinTask);
-                            int score = score(value, Script.LATIN);
-                            if (score > bestScore) {
-                                best = value;
-                                bestScore = score;
+            Task<Text> latinTask = latin.process(image);
+            Task<Text> chineseTask = chinese.process(image);
+            Task<Text> japaneseTask = japanese.process(image);
+            Task<Text> koreanTask = korean.process(image);
+
+            Tasks.whenAllComplete(latinTask, chineseTask, japaneseTask, koreanTask)
+                    .addOnCompleteListener(ignored -> {
+                        try {
+                            String best = "";
+                            int bestScore = Integer.MIN_VALUE;
+
+                            if (latinTask.isSuccessful()) {
+                                String value = textOf(latinTask);
+                                int score = score(value, Script.LATIN);
+                                if (score > bestScore) {
+                                    best = value;
+                                    bestScore = score;
+                                }
                             }
-                        }
 
-                        if (chineseTask.isSuccessful()) {
-                            String value = textOf(chineseTask);
-                            int score = score(value, Script.CHINESE);
-                            if (score > bestScore) {
-                                best = value;
-                                bestScore = score;
+                            if (chineseTask.isSuccessful()) {
+                                String value = textOf(chineseTask);
+                                int score = score(value, Script.CHINESE);
+                                if (score > bestScore) {
+                                    best = value;
+                                    bestScore = score;
+                                }
                             }
-                        }
 
-                        if (japaneseTask.isSuccessful()) {
-                            String value = textOf(japaneseTask);
-                            int score = score(value, Script.JAPANESE);
-                            if (score > bestScore) {
-                                best = value;
-                                bestScore = score;
+                            if (japaneseTask.isSuccessful()) {
+                                String value = textOf(japaneseTask);
+                                int score = score(value, Script.JAPANESE);
+                                if (score > bestScore) {
+                                    best = value;
+                                    bestScore = score;
+                                }
                             }
-                        }
 
-                        if (koreanTask.isSuccessful()) {
-                            String value = textOf(koreanTask);
-                            int score = score(value, Script.KOREAN);
-                            if (score > bestScore) {
-                                best = value;
-                                bestScore = score;
+                            if (koreanTask.isSuccessful()) {
+                                String value = textOf(koreanTask);
+                                int score = score(value, Script.KOREAN);
+                                if (score > bestScore) {
+                                    best = value;
+                                    bestScore = score;
+                                }
                             }
-                        }
 
-                        // Pass the full recognized text verbatim. The Groq
-                        // prompt, not this OCR layer, determines its language.
-                        if (!best.trim().isEmpty()) {
-                            callback.onSuccess(best);
-                            return;
-                        }
+                            // Pass the full recognized text verbatim. The Groq
+                            // prompt, not this OCR layer, determines its language.
+                            if (!best.trim().isEmpty()) {
+                                callback.onSuccess(best);
+                                return;
+                            }
 
-                        Exception error = firstError(latinTask, chineseTask, japaneseTask, koreanTask);
-                        callback.onFailure(error != null
-                                ? error
-                                : new IllegalStateException("没有识别到文字"));
-                    } finally {
-                        latin.close();
-                        chinese.close();
-                        japanese.close();
-                        korean.close();
-                    }
-                });
+                            Exception error = firstError(
+                                    latinTask, chineseTask, japaneseTask, koreanTask);
+                            callback.onFailure(error != null
+                                    ? error
+                                    : new IllegalStateException("没有识别到文字"));
+                        } finally {
+                            finishRequest();
+                        }
+                    });
+        } catch (Exception e) {
+            finishRequest();
+            callback.onFailure(e);
+        }
+    }
+
+    @Override public void close() {
+        boolean shouldClose;
+        synchronized (lifecycleLock) {
+            closeRequested = true;
+            shouldClose = inFlight == 0 && !closed;
+        }
+        if (shouldClose) closeClients();
+    }
+
+    private void finishRequest() {
+        boolean shouldClose;
+        synchronized (lifecycleLock) {
+            if (inFlight > 0) inFlight--;
+            shouldClose = closeRequested && inFlight == 0 && !closed;
+        }
+        if (shouldClose) closeClients();
+    }
+
+    private void closeClients() {
+        synchronized (lifecycleLock) {
+            if (closed) return;
+            closed = true;
+        }
+        latin.close();
+        chinese.close();
+        japanese.close();
+        korean.close();
     }
 
     private static String textOf(Task<Text> task) {

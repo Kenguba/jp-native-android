@@ -340,7 +340,12 @@ public class MainActivity extends Activity {
         public static final String ACTION_RESULT="com.yuen.nativejpocr.OCR_RESULT";
         public static volatile boolean READY=false;
         MediaProjection projection; ImageReader reader; VirtualDisplay vd; int w,h,dpi;
-        @Override public void onCreate(){ super.onCreate(); ensureChannel(); }
+        MultilingualOcrRecognizer ocrRecognizer;
+        @Override public void onCreate(){
+            super.onCreate();
+            ocrRecognizer=new MultilingualOcrRecognizer();
+            ensureChannel();
+        }
         @Override public int onStartCommand(Intent in,int flags,int id){
             if(in==null)return START_NOT_STICKY;
             String a=in.getAction();
@@ -432,7 +437,18 @@ public class MainActivity extends Activity {
         }
 
         void recognize(Bitmap bmp, boolean region){
-            MultilingualOcrRecognizer.recognize(
+            MultilingualOcrRecognizer recognizer=ocrRecognizer;
+            if(recognizer==null){
+                try{
+                    if(region) sendOcrResult(null,"OCR 识别器尚未就绪");
+                    else Toast.makeText(this,"OCR 识别器尚未就绪",Toast.LENGTH_LONG).show();
+                } finally {
+                    try{ bmp.recycle(); }catch(Exception ignored){}
+                }
+                return;
+            }
+
+            recognizer.recognize(
                     bmp,
                     new MultilingualOcrRecognizer.Callback() {
                         @Override public void onSuccess(String q) {
@@ -486,7 +502,13 @@ public class MainActivity extends Activity {
             if(r!=null) r.close();
             if(p!=null) try{ p.stop(); }catch(Exception ignored){}
         }
-        @Override public void onDestroy(){ stopCapture(); super.onDestroy(); }
+        @Override public void onDestroy(){
+            MultilingualOcrRecognizer recognizer=ocrRecognizer;
+            ocrRecognizer=null;
+            if(recognizer!=null) recognizer.close();
+            stopCapture();
+            super.onDestroy();
+        }
         @Override public android.os.IBinder onBind(Intent i){ return null; }
     }
 
