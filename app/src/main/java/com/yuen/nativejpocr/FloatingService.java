@@ -848,7 +848,9 @@ public class FloatingService extends Service {
         markAction("OPEN_QUICK_LOOKUP:" + q);
         Intent i = new Intent(this, QuickLookupActivity.class)
                 .putExtra("query", q)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                        | Intent.FLAG_ACTIVITY_CLEAR_TASK
+                        | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
 
         try {
             startActivity(i);
