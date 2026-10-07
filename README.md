@@ -287,11 +287,12 @@ APK 文件名固定格式：
 
 ## 本地构建
 
-Debug 一次构建全部 4 个 ABI：
+为遵守单 APK ≤ 30 MB 的硬限制，默认只构建当前可发布的 3 个变体；universal 不作为默认发布产物。
+
+Debug：
 
 ```bash
 gradle --no-daemon \
-  :app:assembleUniversalDebug \
   :app:assembleArmDebug \
   :app:assembleArm64Debug \
   :app:assembleArmv7Debug
@@ -301,7 +302,6 @@ gradle --no-daemon \
 
 ```bash
 gradle --no-daemon \
-  :app:assembleUniversalRelease \
   :app:assembleArmRelease \
   :app:assembleArm64Release \
   :app:assembleArmv7Release
