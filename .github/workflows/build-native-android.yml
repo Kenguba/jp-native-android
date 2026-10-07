@@ -16,6 +16,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Enforce tracked source size budget
+        shell: bash
+        run: |
+          MAX_BYTES=$((35 * 1024 * 1024))
+          TOTAL_BYTES=$(git ls-files -z | xargs -0 -r stat -c '%s' | awk '{sum += $1} END {print sum + 0}')
+          echo "Tracked project size: $TOTAL_BYTES bytes / $MAX_BYTES bytes"
+          if (( TOTAL_BYTES > MAX_BYTES )); then
+            echo "::error::Tracked project files exceed the 35 MB hard limit."
+            exit 1
+          fi
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -81,7 +92,6 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           gradle --no-daemon \
-            :app:assembleUniversalRelease \
             :app:assembleArmRelease \
             :app:assembleArm64Release \
             :app:assembleArmv7Release
@@ -93,7 +103,6 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           gradle --no-daemon \
-            :app:assembleUniversalDebug \
             :app:assembleArmDebug \
             :app:assembleArm64Debug \
             :app:assembleArmv7Debug
@@ -103,7 +112,6 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/universal/release/app-universal-release.apk dist/jp-native-android-universal.apk
           cp app/build/outputs/apk/arm/release/app-arm-release.apk dist/jp-native-android-arm.apk
           cp app/build/outputs/apk/arm64/release/app-arm64-release.apk dist/jp-native-android-arm64-v8a.apk
           cp app/build/outputs/apk/armv7/release/app-armv7-release.apk dist/jp-native-android-armeabi-v7a.apk
@@ -113,10 +121,30 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/universal/debug/app-universal-debug.apk dist/jp-native-android-universal-UNSIGNED-DEBUG.apk
           cp app/build/outputs/apk/arm/debug/app-arm-debug.apk dist/jp-native-android-arm-UNSIGNED-DEBUG.apk
           cp app/build/outputs/apk/arm64/debug/app-arm64-debug.apk dist/jp-native-android-arm64-v8a-UNSIGNED-DEBUG.apk
           cp app/build/outputs/apk/armv7/debug/app-armv7-debug.apk dist/jp-native-android-armeabi-v7a-UNSIGNED-DEBUG.apk
+
+      - name: Enforce APK size budget
+        shell: bash
+        run: |
+          MAX_BYTES=$((30 * 1024 * 1024))
+          FAILED=0
+          shopt -s nullglob
+          APKS=(dist/*.apk)
+          if (( ${#APKS[@]} == 0 )); then
+            echo "::error::No APK files were prepared."
+            exit 1
+          fi
+          for apk in "${APKS[@]}"; do
+            SIZE=$(stat -c '%s' "$apk")
+            echo "$(basename "$apk"): $SIZE bytes / $MAX_BYTES bytes"
+            if (( SIZE > MAX_BYTES )); then
+              echo "::error file=$apk::APK exceeds the 30 MB hard limit."
+              FAILED=1
+            fi
+          done
+          exit "$FAILED"
 
       - name: Verify release signatures
         if: env.HAS_SIGNING == 'true'
@@ -179,9 +207,8 @@ jobs:
           - **jp-native-android-arm64-v8a.apk**：只包含 `arm64-v8a`，推荐现在绝大多数 Android 手机使用。
           - **jp-native-android-armeabi-v7a.apk**：只包含 `armeabi-v7a`，适合老旧 32 位 ARM 手机和平板。
           - **jp-native-android-arm.apk**：包含 `arm64-v8a + armeabi-v7a`，手机通用集合版。
-          - **jp-native-android-universal.apk**：包含 `arm64-v8a + armeabi-v7a + x86 + x86_64`，全架构版。
 
-          x86 和 x86_64 不单独提供 APK，它们已经包含在 universal 全架构版中。
+          为遵守单 APK 不超过 30 MB 的硬限制，当前不发布 universal APK。x86 / x86_64 如需支持，应改为分架构产物，不能通过超大 universal APK 绕过体积限制。
 
           ## SHA-256
 
@@ -202,7 +229,6 @@ jobs:
               dist/jp-native-android-arm64-v8a.apk \
               dist/jp-native-android-armeabi-v7a.apk \
               dist/jp-native-android-arm.apk \
-              dist/jp-native-android-universal.apk \
               dist/SHA256SUMS.txt \
               --clobber
 
@@ -214,7 +240,6 @@ jobs:
               dist/jp-native-android-arm64-v8a.apk \
               dist/jp-native-android-armeabi-v7a.apk \
               dist/jp-native-android-arm.apk \
-              dist/jp-native-android-universal.apk \
               dist/SHA256SUMS.txt \
               --target "$GITHUB_SHA" \
               --title "JP Native Android $VERSION_NAME ($TAG)" \
