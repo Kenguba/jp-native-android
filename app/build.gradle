@@ -87,5 +87,9 @@ android {
 }
 
 dependencies {
-    implementation 'com.google.mlkit:text-recognition-japanese:16.0.1'
+    // Use Google Play services OCR models to support English/Latin, Chinese and Japanese
+    // without bundling three large recognition models into the APK.
+    implementation 'com.google.android.gms:play-services-mlkit-text-recognition:19.0.1'
+    implementation 'com.google.android.gms:play-services-mlkit-text-recognition-chinese:16.0.1'
+    implementation 'com.google.android.gms:play-services-mlkit-text-recognition-japanese:16.0.1'
 }
