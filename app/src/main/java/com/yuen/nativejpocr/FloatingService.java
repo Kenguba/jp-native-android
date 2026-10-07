@@ -90,8 +90,6 @@ public class FloatingService extends Service {
     private boolean projectionRequestInFlight = false;
     private android.window.OnBackInvokedDispatcher searchBackDispatcher;
     private android.window.OnBackInvokedCallback searchBackCallback;
-    private android.window.OnBackInvokedDispatcher lookupBackDispatcher;
-    private android.window.OnBackInvokedCallback lookupBackCallback;
     private EditText lookupEditor;
     private View lookupHeaderNormal;
     private View lookupHeaderEdit;
@@ -1223,6 +1221,30 @@ public class FloatingService extends Service {
                 : LOOKUP_MODE_FLOAT;
     }
 
+    private void setLookupOverlayFocusable(boolean focusable) {
+        if (lookupOverlay == null || lookupOverlayLp == null || wm == null) return;
+
+        if (focusable) {
+            lookupOverlayLp.flags &=
+                    ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+        } else {
+            lookupOverlayLp.flags |=
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+        }
+
+        try {
+            wm.updateViewLayout(lookupOverlay, lookupOverlayLp);
+        } catch (Throwable t) {
+            recordHandledCrash("setLookupOverlayFocusable", t);
+        }
+
+        if (focusable) {
+            lookupOverlay.requestFocus();
+        } else {
+            lookupOverlay.clearFocus();
+        }
+    }
+
     private void showLookupOverlay(String rawQuery, boolean returnToSearch) {
         showLookupOverlay(rawQuery, returnToSearch, LOOKUP_MODE_FLOAT, true);
     }
@@ -1360,12 +1382,20 @@ public class FloatingService extends Service {
             lookupHeaderEdit = editHeader;
             header.setVisibility(View.GONE);
             editHeader.setVisibility(View.VISIBLE);
+
+            // Normal lookup mode intentionally leaves the WindowManager overlay
+            // NOT_FOCUSABLE so Android Back belongs to the transparent host.
+            // Only editing temporarily takes focus for IME input.
+            setLookupOverlayFocusable(true);
+
             editor.setText(lookupOverlayQuery);
             editor.setSelection(editor.length());
             editor.requestFocus();
-            InputMethodManager imm =
-                    (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
-            imm.showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT);
+            editor.post(() -> {
+                InputMethodManager imm =
+                        (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
+                imm.showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT);
+            });
         };
         title.setOnClickListener(v -> enterEditMode.run());
 
@@ -1386,6 +1416,7 @@ public class FloatingService extends Service {
             if (next.equals(q)) {
                 header.setVisibility(View.VISIBLE);
                 editHeader.setVisibility(View.GONE);
+                setLookupOverlayFocusable(false);
             } else {
                 showLookupOverlay(next, returnToSearch, mode, true);
             }
@@ -1541,8 +1572,8 @@ public class FloatingService extends Service {
                     FrameLayout.LayoutParams.MATCH_PARENT);
             panelLp.leftMargin = dp(8);
             panelLp.rightMargin = dp(8);
-            panelLp.topMargin = dp(8);
-            panelLp.bottomMargin = dp(56);
+            panelLp.topMargin = dp(56);
+            panelLp.bottomMargin = dp(38);
             root.addView(panel, panelLp);
 
             root.setOnClickListener(v -> {
@@ -1580,7 +1611,8 @@ public class FloatingService extends Service {
                 width,
                 height,
                 overlayType(),
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                 PixelFormat.TRANSLUCENT);
         lookupOverlayLp.gravity = Gravity.TOP | Gravity.START;
         lookupOverlayLp.softInputMode =
@@ -1597,29 +1629,6 @@ public class FloatingService extends Service {
 
         try {
             wm.addView(root, lookupOverlayLp);
-            root.requestFocus();
-
-            if (Build.VERSION.SDK_INT >= 33) {
-                root.post(() -> {
-                    try {
-                        android.window.OnBackInvokedDispatcher dispatcher =
-                                root.findOnBackInvokedDispatcher();
-                        if (dispatcher != null && lookupOverlay == root) {
-                            android.window.OnBackInvokedCallback callback = () -> {
-                                markAction("LOOKUP_SYSTEM_GESTURE_BACK");
-                                handleLookupBack();
-                            };
-                            dispatcher.registerOnBackInvokedCallback(
-                                    android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
-                                    callback);
-                            lookupBackDispatcher = dispatcher;
-                            lookupBackCallback = callback;
-                        }
-                    } catch (Throwable t) {
-                        recordHandledCrash("registerLookupBackCallback", t);
-                    }
-                });
-            }
 
             // Keep the original bubble mounted continuously. A proxy is added
             // above the result layer instead of removing/re-adding the bubble.
@@ -1927,6 +1936,7 @@ public class FloatingService extends Service {
         lookupEditor = null;
         lookupHeaderNormal = null;
         lookupHeaderEdit = null;
+        setLookupOverlayFocusable(false);
     }
 
     private void notifyLookupHostFinish() {
@@ -1980,16 +1990,6 @@ public class FloatingService extends Service {
 
     private void removeLookupOverlay(boolean clearRestoreState) {
         saveLookupOverlayBounds();
-
-        if (Build.VERSION.SDK_INT >= 33 &&
-                lookupBackDispatcher != null &&
-                lookupBackCallback != null) {
-            try {
-                lookupBackDispatcher.unregisterOnBackInvokedCallback(lookupBackCallback);
-            } catch (Throwable ignored) {}
-            lookupBackDispatcher = null;
-            lookupBackCallback = null;
-        }
 
         if (lookupOverlay != null && wm != null) {
             try {
