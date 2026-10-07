@@ -64,22 +64,11 @@ public class QuickLookupActivity extends Activity {
         saveHistory(query);
 
         configureWindow();
-
-        FrameLayout screen = new FrameLayout(this);
-        screen.setBackgroundColor(0xffeaf7ff);
+        installBackHandler();
 
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setBackground(rounded(Color.WHITE, 16));
-
-        FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT);
-        panelLp.leftMargin = dp(10);
-        panelLp.rightMargin = dp(10);
-        panelLp.topMargin = dp(10);
-        panelLp.bottomMargin = dp(10);
-        screen.addView(panel, panelLp);
+        panel.setBackgroundColor(Color.WHITE);
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
@@ -217,7 +206,7 @@ public class QuickLookupActivity extends Activity {
         content.addView(footer);
 
         panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        setContentView(screen);
+        setContentView(panel);
 
         if (query.isEmpty()) {
             aiProgress.setVisibility(View.GONE);
@@ -225,6 +214,26 @@ public class QuickLookupActivity extends Activity {
         } else {
             loadAi(query);
         }
+    }
+
+    private void installBackHandler() {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                    this::closeLookupTask);
+        }
+    }
+
+    private void closeLookupTask() {
+        try {
+            finishAndRemoveTask();
+        } catch (Throwable ignored) {
+            finish();
+        }
+    }
+
+    @Override public void onBackPressed() {
+        closeLookupTask();
     }
 
     private void configureWindow() {
