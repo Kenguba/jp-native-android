@@ -49,6 +49,7 @@ public class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle b){
         super.onCreate(b);
+        resetCrashDiagnosticsOnUpgrade();
         LinearLayout root=base();
         TextView title=title("日语悬浮搜索");
         root.addView(title);
@@ -157,6 +158,21 @@ public class MainActivity extends Activity {
                         Toast.LENGTH_SHORT).show();
             }
         }
+    }
+
+    void resetCrashDiagnosticsOnUpgrade(){
+        SharedPreferences p=getSharedPreferences("crash_log",MODE_PRIVATE);
+        int saved=p.getInt("diagnostic_build_code",-1);
+        if(saved==BuildConfig.VERSION_CODE) return;
+
+        p.edit()
+                .remove("last")
+                .remove("time")
+                .remove("last_action")
+                .remove("last_action_time")
+                .remove("last_handled")
+                .putInt("diagnostic_build_code",BuildConfig.VERSION_CODE)
+                .commit();
     }
 
     String systemExitSummary(){
