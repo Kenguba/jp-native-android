@@ -239,6 +239,7 @@ APK 文件名固定格式：
 - 对外查询 Deep Link 固定为 `jp-native://lookup?q=<URL编码后的查询内容>`；由无界面的 `LookupLinkActivity` 接收后转发到 `FloatingService.ACTION_SHOW_LOOKUP_OVERLAY`，Deep Link 本身不得渲染或切换到查词 Activity 页面
 - Deep Link 支持 `mode=fullscreen`（外部 Intent 默认）与 `mode=float`（必须显式指定）；fullscreen 仍然必须是 `TYPE_APPLICATION_OVERLAY` 覆盖层，不允许打开查词 Activity。Deep Link 中转 Activity 必须透明、无预览、无动画、空 taskAffinity，并立即 finish，视觉上保持调用方页面不变
 - `mode=fullscreen` 的 WindowManager 根层必须覆盖整个可用屏幕，并在词典白色卡片下方绘制黑色半透明 Mask；点击卡片外 Mask 必须立即关闭本次 Intent 浮层。系统返回键、Android 13+ 系统返回手势、左右边缘返回手势统一调用同一个 `handleLookupBack()`：有路由历史先返回上一条，无路由历史则关闭浮层
+- fullscreen Mask 必须是独立的全屏黑色 View（约 42% 不透明度），作为 Root 的第一个子层，白色词典卡片后加入并覆盖在 Mask 上；禁止只依赖 Root 的半透明 background，因为部分 ROM 的应用悬浮窗口不会稳定显示 Root alpha 背景
 - Intent 浮层顶部词头按参考视频2支持编辑态：点词头切换为输入框 + 蓝色“确认”并弹出键盘；编辑态按返回只退出编辑并收起键盘，第二次返回才继续走查询路由/关闭逻辑。OCR 触发期间蓝色悬浮球不得临时设为 INVISIBLE
 - 外部 Intent 的系统返回不能依赖 `TYPE_APPLICATION_OVERLAY` 自己接管：`LookupLinkActivity` 必须作为完全透明、无动画、不可触摸的 Back 宿主在浮层生命周期内保持存活，Android 13+ 通过 Activity 的 `OnBackInvokedDispatcher`、旧版本通过 `onBackPressed()` 把返回事件发送给 `FloatingService.ACTION_LOOKUP_BACK`；只有浮层真正关闭时 Service 才通知宿主 finish。这样视觉上没有额外页面，但系统返回手势有可靠接收者
 - 普通浏览/全屏 Mask 状态下 Intent Overlay 必须保持 `FLAG_NOT_FOCUSABLE`，确保透明 Back 宿主是真正的系统返回目标；只有点顶部词头进入编辑时临时去掉 `FLAG_NOT_FOCUSABLE` 以获取 IME，退出编辑或确认后立即恢复。禁止让常态 Overlay 抢走 Activity Back 焦点

@@ -1338,7 +1338,24 @@ public class FloatingService extends Service {
 
         LookupOverlayFrameLayout root = new LookupOverlayFrameLayout(this);
         boolean fullscreen = LOOKUP_MODE_FULLSCREEN.equals(mode);
-        root.setBackgroundColor(fullscreen ? 0x66000000 : Color.TRANSPARENT);
+        root.setBackgroundColor(Color.TRANSPARENT);
+
+        View fullscreenMask = null;
+        if (fullscreen) {
+            fullscreenMask = new View(this);
+            fullscreenMask.setBackgroundColor(Color.BLACK);
+            fullscreenMask.setAlpha(0.42f);
+            fullscreenMask.setClickable(true);
+            fullscreenMask.setFocusable(false);
+            fullscreenMask.setContentDescription("点击关闭查词浮层");
+            fullscreenMask.setOnClickListener(v -> {
+                markAction("LOOKUP_MASK_DISMISS");
+                closeLookupOverlay();
+            });
+            root.addView(fullscreenMask, new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT));
+        }
 
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
@@ -1616,11 +1633,6 @@ public class FloatingService extends Service {
             panelLp.topMargin = dp(56);
             panelLp.bottomMargin = dp(38);
             root.addView(panel, panelLp);
-
-            root.setOnClickListener(v -> {
-                markAction("LOOKUP_MASK_DISMISS");
-                closeLookupOverlay();
-            });
         } else {
             root.addView(panel, new FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT,
