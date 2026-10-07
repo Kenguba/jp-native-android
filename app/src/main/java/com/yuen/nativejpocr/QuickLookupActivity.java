@@ -201,15 +201,6 @@ public class QuickLookupActivity extends Activity {
         Window w = getWindow();
         w.setStatusBarColor(0xffeaf7ff);
         w.setNavigationBarColor(Color.WHITE);
-
-        View decor = w.getDecorView();
-        if (decor != null) {
-            int flags = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
-            if (android.os.Build.VERSION.SDK_INT >= 26) {
-                flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
-            }
-            decor.setSystemUiVisibility(flags);
-        }
     }
 
     private void addSectionHeader(LinearLayout parent, String title) {
