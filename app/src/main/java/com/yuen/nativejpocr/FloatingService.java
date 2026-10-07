@@ -36,8 +36,11 @@ public class FloatingService extends Service {
             "com.yuen.nativejpocr.SHOW_LOOKUP_OVERLAY";
     public static final String EXTRA_SEARCH_QUERY = "floating_search_query";
     public static final String EXTRA_LOOKUP_QUERY = "lookup_query";
+    public static final String EXTRA_LOOKUP_MODE = "lookup_mode";
     public static final String EXTRA_RETURN_TO_SEARCH = "return_to_floating_search";
     public static final String EXTRA_POPUP_MODE = "quick_lookup_popup";
+    public static final String LOOKUP_MODE_FLOAT = "float";
+    public static final String LOOKUP_MODE_FULLSCREEN = "fullscreen";
 
     private static final String LOOKUP_WINDOW_PREFS = "lookup_overlay_window";
     private static final String LOOKUP_WIDTH = "width";
@@ -61,8 +64,24 @@ public class FloatingService extends Service {
     private View lookupOverlay;
     private WindowManager.LayoutParams lookupOverlayLp;
     private String lookupOverlayQuery = "";
+    private String lookupOverlayMode = LOOKUP_MODE_FLOAT;
     private boolean lookupOverlayReturnToSearch;
-    private final ArrayDeque<String> lookupRouteStack = new ArrayDeque<>();
+    private View bubbleTopProxy;
+    private WindowManager.LayoutParams bubbleTopProxyLp;
+
+    private static final class LookupRoute {
+        final String query;
+        final String mode;
+        final boolean returnToSearch;
+
+        LookupRoute(String query, String mode, boolean returnToSearch) {
+            this.query = query;
+            this.mode = mode;
+            this.returnToSearch = returnToSearch;
+        }
+    }
+
+    private final ArrayDeque<LookupRoute> lookupRouteStack = new ArrayDeque<>();
     private String currentSearchQuery = "";
     private boolean projectionRequestInFlight = false;
     private android.window.OnBackInvokedDispatcher searchBackDispatcher;
@@ -968,13 +987,148 @@ public class FloatingService extends Service {
         return row;
     }
 
-    private void bringBubbleToFront() {
-        if (bubble == null || wm == null) return;
+    private View createBubbleVisual() {
+        FrameLayout bubbleView = new FrameLayout(this);
+        bubbleView.setBackgroundResource(R.drawable.floating_bubble_bg);
+        bubbleView.setElevation(dp(12));
 
+        TextView kana = new TextView(this);
+        kana.setText("あ");
+        kana.setTextColor(Color.WHITE);
+        kana.setTextSize(22);
+        kana.setTypeface(Typeface.DEFAULT_BOLD);
+        kana.setGravity(Gravity.CENTER);
+        bubbleView.addView(kana, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
+
+        ImageView searchMark = new ImageView(this);
+        searchMark.setImageResource(android.R.drawable.ic_menu_search);
+        searchMark.setColorFilter(Color.WHITE);
+        FrameLayout.LayoutParams searchMarkLp =
+                new FrameLayout.LayoutParams(dp(18), dp(18));
+        searchMarkLp.gravity = Gravity.END | Gravity.BOTTOM;
+        searchMarkLp.rightMargin = dp(4);
+        searchMarkLp.bottomMargin = dp(4);
+        bubbleView.addView(searchMark, searchMarkLp);
+
+        return bubbleView;
+    }
+
+    private void ensureBubbleProxyOnTop() {
+        if (bubble == null || bubbleLp == null || wm == null) return;
+
+        if (bubbleTopProxy != null && bubbleTopProxyLp != null) {
+            bubbleTopProxyLp.x = bubbleLp.x;
+            bubbleTopProxyLp.y = bubbleLp.y;
+            try {
+                wm.updateViewLayout(bubbleTopProxy, bubbleTopProxyLp);
+            } catch (Exception ignored) {}
+            return;
+        }
+
+        View proxy = createBubbleVisual();
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                dp(54), dp(54), overlayType(),
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        lp.gravity = Gravity.TOP | Gravity.START;
+        lp.x = bubbleLp.x;
+        lp.y = bubbleLp.y;
+
+        proxy.setOnTouchListener(new View.OnTouchListener() {
+            float downRawX;
+            float downRawY;
+            int startX;
+            int startY;
+            boolean moved;
+
+            @Override public boolean onTouch(View v, MotionEvent e) {
+                switch (e.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        downRawX = e.getRawX();
+                        downRawY = e.getRawY();
+                        startX = bubbleTopProxyLp == null ? bubbleLp.x : bubbleTopProxyLp.x;
+                        startY = bubbleTopProxyLp == null ? bubbleLp.y : bubbleTopProxyLp.y;
+                        moved = false;
+                        return true;
+
+                    case MotionEvent.ACTION_MOVE:
+                        int dx = Math.round(e.getRawX() - downRawX);
+                        int dy = Math.round(e.getRawY() - downRawY);
+                        if (Math.abs(dx) > dp(5) || Math.abs(dy) > dp(5)) moved = true;
+
+                        DisplayMetrics dm = getResources().getDisplayMetrics();
+                        int nx = Math.max(0, Math.min(startX + dx, dm.widthPixels - dp(54)));
+                        int ny = Math.max(0, Math.min(startY + dy, dm.heightPixels - dp(54)));
+
+                        bubbleLp.x = nx;
+                        bubbleLp.y = ny;
+                        if (bubbleTopProxyLp != null) {
+                            bubbleTopProxyLp.x = nx;
+                            bubbleTopProxyLp.y = ny;
+                        }
+
+                        try {
+                            wm.updateViewLayout(bubble, bubbleLp);
+                        } catch (Exception ignored) {}
+                        try {
+                            if (bubbleTopProxy != null && bubbleTopProxyLp != null) {
+                                wm.updateViewLayout(bubbleTopProxy, bubbleTopProxyLp);
+                            }
+                        } catch (Exception ignored) {}
+                        return true;
+
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        getSharedPreferences("float_pos", MODE_PRIVATE)
+                                .edit()
+                                .putInt("x", bubbleLp.x)
+                                .putInt("y", bubbleLp.y)
+                                .apply();
+
+                        if (!moved) {
+                            if (lookupOverlay != null) {
+                                closeLookupOverlay();
+                            } else if (searchPanel != null) {
+                                removeSearchPanel();
+                            }
+                        }
+                        return true;
+
+                    default:
+                        return true;
+                }
+            }
+        });
+
+        bubbleTopProxy = proxy;
+        bubbleTopProxyLp = lp;
         try {
-            wm.removeView(bubble);
-            wm.addView(bubble, bubbleLp);
-        } catch (Exception ignored) {}
+            wm.addView(proxy, lp);
+        } catch (Exception e) {
+            bubbleTopProxy = null;
+            bubbleTopProxyLp = null;
+        }
+    }
+
+    private void removeBubbleProxyIfUnused() {
+        if (lookupOverlay != null || searchPanel != null) return;
+        if (bubbleTopProxy != null && wm != null) {
+            try {
+                wm.removeView(bubbleTopProxy);
+            } catch (Exception ignored) {}
+        }
+        bubbleTopProxy = null;
+        bubbleTopProxyLp = null;
+    }
+
+    private void bringBubbleToFront() {
+        // Do not remove/re-add the real bubble: that caused a visible blink.
+        // A temporary identical proxy window is added above the content layer
+        // while the real bubble stays mounted continuously underneath.
+        ensureBubbleProxyOnTop();
     }
 
     private void openQuickLookup(String q) {
@@ -994,6 +1148,7 @@ public class FloatingService extends Service {
         Intent i = new Intent(this, FloatingService.class)
                 .setAction(ACTION_SHOW_LOOKUP_OVERLAY)
                 .putExtra(EXTRA_LOOKUP_QUERY, value)
+                .putExtra(EXTRA_LOOKUP_MODE, LOOKUP_MODE_FLOAT)
                 .putExtra(EXTRA_RETURN_TO_SEARCH, returnToSearch);
 
         if (returnToSearch) {
@@ -1029,20 +1184,55 @@ public class FloatingService extends Service {
         return icon;
     }
 
+    private String normalizeLookupQuery(String rawQuery) {
+        String value = rawQuery == null ? "" : rawQuery.trim();
+        if (value.isEmpty()) return "";
+
+        if (value.startsWith("intent://") || value.startsWith("jp-native://")) {
+            try {
+                android.net.Uri uri = android.net.Uri.parse(value);
+                String nested = uri.getQueryParameter("q");
+                if (nested == null || nested.trim().isEmpty()) {
+                    nested = uri.getQueryParameter("query");
+                }
+                if (nested != null && !nested.trim().isEmpty()) {
+                    return nested.trim();
+                }
+            } catch (Throwable ignored) {}
+        }
+        return value;
+    }
+
+    private String normalizeLookupMode(String rawMode) {
+        return LOOKUP_MODE_FULLSCREEN.equalsIgnoreCase(
+                rawMode == null ? "" : rawMode.trim())
+                ? LOOKUP_MODE_FULLSCREEN
+                : LOOKUP_MODE_FLOAT;
+    }
+
     private void showLookupOverlay(String rawQuery, boolean returnToSearch) {
-        showLookupOverlay(rawQuery, returnToSearch, true);
+        showLookupOverlay(rawQuery, returnToSearch, LOOKUP_MODE_FLOAT, true);
     }
 
     private void showLookupOverlay(
             String rawQuery,
             boolean returnToSearch,
+            String rawMode) {
+        showLookupOverlay(rawQuery, returnToSearch, rawMode, true);
+    }
+
+    private void showLookupOverlay(
+            String rawQuery,
+            boolean returnToSearch,
+            String rawMode,
             boolean pushCurrentRoute) {
         if (!Settings.canDrawOverlays(this) || wm == null) {
             safeToast("没有悬浮窗权限，无法显示查词浮层");
             return;
         }
 
-        String q = rawQuery == null ? "" : rawQuery.trim();
+        String q = normalizeLookupQuery(rawQuery);
+        String mode = normalizeLookupMode(rawMode);
         if (q.isEmpty()) return;
 
         String previousQuery = lookupOverlayQuery == null
@@ -1051,8 +1241,11 @@ public class FloatingService extends Service {
         if (pushCurrentRoute &&
                 lookupOverlay != null &&
                 !previousQuery.isEmpty() &&
-                !previousQuery.equals(q)) {
-            lookupRouteStack.addLast(previousQuery);
+                (!previousQuery.equals(q) || !lookupOverlayMode.equals(mode))) {
+            lookupRouteStack.addLast(new LookupRoute(
+                    previousQuery,
+                    lookupOverlayMode,
+                    lookupOverlayReturnToSearch));
             while (lookupRouteStack.size() > 32) {
                 lookupRouteStack.removeFirst();
             }
@@ -1063,6 +1256,7 @@ public class FloatingService extends Service {
         removeResultCard();
 
         lookupOverlayQuery = q;
+        lookupOverlayMode = mode;
         lookupOverlayReturnToSearch = returnToSearch;
         saveLookupHistory(q);
 
@@ -1103,7 +1297,7 @@ public class FloatingService extends Service {
 
         replay.setOnClickListener(v -> {
             LOOKUP_AI_CACHE.remove(q);
-            showLookupOverlay(q, returnToSearch);
+            showLookupOverlay(q, returnToSearch, mode, false);
         });
 
         panel.addView(header, new LinearLayout.LayoutParams(
@@ -1242,6 +1436,7 @@ public class FloatingService extends Service {
 
         DisplayMetrics dm = getResources().getDisplayMetrics();
         SharedPreferences prefs = getSharedPreferences(LOOKUP_WINDOW_PREFS, MODE_PRIVATE);
+        boolean fullscreen = LOOKUP_MODE_FULLSCREEN.equals(mode);
 
         int minWidth = dp(250);
         int minHeight = dp(300);
@@ -1251,12 +1446,14 @@ public class FloatingService extends Service {
         int defaultWidth = Math.min(maxWidth, dm.widthPixels - dp(16));
         int defaultHeight = Math.min(maxHeight, Math.round(dm.heightPixels * 0.72f));
 
-        int width = clampLookup(
-                prefs.getInt(LOOKUP_WIDTH, defaultWidth), minWidth, maxWidth);
-        int height = clampLookup(
-                prefs.getInt(LOOKUP_HEIGHT, defaultHeight), minHeight, maxHeight);
+        int width = fullscreen
+                ? WindowManager.LayoutParams.MATCH_PARENT
+                : clampLookup(prefs.getInt(LOOKUP_WIDTH, defaultWidth), minWidth, maxWidth);
+        int height = fullscreen
+                ? WindowManager.LayoutParams.MATCH_PARENT
+                : clampLookup(prefs.getInt(LOOKUP_HEIGHT, defaultHeight), minHeight, maxHeight);
 
-        int defaultX = Math.max(dp(4), (dm.widthPixels - width) / 2);
+        int defaultX = Math.max(dp(4), (dm.widthPixels - defaultWidth) / 2);
         int defaultY = dp(52);
 
         lookupOverlayLp = new WindowManager.LayoutParams(
@@ -1266,19 +1463,21 @@ public class FloatingService extends Service {
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                 PixelFormat.TRANSLUCENT);
         lookupOverlayLp.gravity = Gravity.TOP | Gravity.START;
-        lookupOverlayLp.x = prefs.getInt(LOOKUP_X, defaultX);
-        lookupOverlayLp.y = prefs.getInt(LOOKUP_Y, defaultY);
-        clampLookupBounds(lookupOverlayLp, dm.widthPixels, dm.heightPixels);
+        lookupOverlayLp.x = fullscreen ? 0 : prefs.getInt(LOOKUP_X, defaultX);
+        lookupOverlayLp.y = fullscreen ? 0 : prefs.getInt(LOOKUP_Y, defaultY);
+        if (!fullscreen) {
+            clampLookupBounds(lookupOverlayLp, dm.widthPixels, dm.heightPixels);
+        }
 
         lookupOverlay = root;
-        installLookupOverlayGestures(header, title, footer);
+        installLookupOverlayGestures(header, title, footer, fullscreen);
 
         try {
             wm.addView(root, lookupOverlayLp);
             root.requestFocus();
-            // The blue floating lookup bubble must stay visually above
-            // the dictionary overlay, matching the reference behavior.
-            bringBubbleToFront();
+            // Keep the original bubble mounted continuously. A proxy is added
+            // above the result layer instead of removing/re-adding the bubble.
+            ensureBubbleProxyOnTop();
         } catch (Throwable e) {
             lookupOverlay = null;
             lookupOverlayLp = null;
@@ -1395,7 +1594,11 @@ public class FloatingService extends Service {
     private void installLookupOverlayGestures(
             View header,
             View title,
-            View resizeFooter) {
+            View resizeFooter,
+            boolean fullscreen) {
+        if (fullscreen) {
+            return;
+        }
         View.OnTouchListener drag = new View.OnTouchListener() {
             float downRawX;
             float downRawY;
@@ -1560,9 +1763,13 @@ public class FloatingService extends Service {
         if (lookupOverlay == null) return false;
 
         if (!lookupRouteStack.isEmpty()) {
-            String previous = lookupRouteStack.removeLast();
-            markAction("LOOKUP_ROUTE_BACK:" + previous);
-            showLookupOverlay(previous, lookupOverlayReturnToSearch, false);
+            LookupRoute previous = lookupRouteStack.removeLast();
+            markAction("LOOKUP_ROUTE_BACK:" + previous.query);
+            showLookupOverlay(
+                    previous.query,
+                    previous.returnToSearch,
+                    previous.mode,
+                    false);
         } else {
             markAction("LOOKUP_ROUTE_EMPTY_CLOSE");
             closeLookupOverlay();
@@ -1596,6 +1803,8 @@ public class FloatingService extends Service {
         lookupOverlay = null;
         lookupOverlayLp = null;
         lookupOverlayQuery = "";
+        lookupOverlayMode = LOOKUP_MODE_FLOAT;
+        removeBubbleProxyIfUnused();
 
         if (clearRestoreState) {
             lookupOverlayReturnToSearch = false;
@@ -1684,6 +1893,7 @@ public class FloatingService extends Service {
 
             searchPanel = null;
         }
+        removeBubbleProxyIfUnused();
     }
 
     private void removeResultCard() {
@@ -1710,14 +1920,15 @@ public class FloatingService extends Service {
         }
 
         if (intent != null && ACTION_SHOW_LOOKUP_OVERLAY.equals(intent.getAction())) {
-            String q = intent.getStringExtra(EXTRA_LOOKUP_QUERY);
+            String q = normalizeLookupQuery(intent.getStringExtra(EXTRA_LOOKUP_QUERY));
+            String mode = normalizeLookupMode(intent.getStringExtra(EXTRA_LOOKUP_MODE));
             boolean returnToSearch =
                     intent.getBooleanExtra(EXTRA_RETURN_TO_SEARCH, false);
             String restoredQuery = intent.getStringExtra(EXTRA_SEARCH_QUERY);
             if (restoredQuery != null) currentSearchQuery = restoredQuery;
 
-            if (q != null && !q.trim().isEmpty()) {
-                main.post(() -> showLookupOverlay(q, returnToSearch));
+            if (!q.isEmpty()) {
+                main.post(() -> showLookupOverlay(q, returnToSearch, mode));
             }
         }
 
@@ -1733,6 +1944,14 @@ public class FloatingService extends Service {
         removeSearchPanel();
         removeLookupOverlay(true);
         removeResultCard();
+
+        if (bubbleTopProxy != null && wm != null) {
+            try {
+                wm.removeView(bubbleTopProxy);
+            } catch (Exception ignored) {}
+            bubbleTopProxy = null;
+            bubbleTopProxyLp = null;
+        }
 
         if (bubble != null && wm != null) {
             try {
