@@ -52,14 +52,6 @@
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".SearchOverlayActivity"
-            android:exported="false"
-            android:excludeFromRecents="true"
-            android:noHistory="true"
-            android:launchMode="singleTop"
-            android:theme="@style/Theme.JpSearchOverlay"/>
-
         <activity android:name=".MainActivity$OcrActivity" android:exported="false"/>
 
         <service
