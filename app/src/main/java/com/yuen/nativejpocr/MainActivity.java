@@ -77,6 +77,26 @@ public class MainActivity extends Activity {
             exit.setTextIsSelectable(true);
             root.addView(exit);
         }
+
+        String lastAction=getSharedPreferences("crash_log",MODE_PRIVATE)
+                .getString("last_action","");
+        if(lastAction!=null && !lastAction.isEmpty()){
+            TextView action=text("崩溃前最后动作：\n"+lastAction);
+            action.setTextSize(12);
+            action.setTextColor(0xff5d2e8c);
+            action.setTextIsSelectable(true);
+            root.addView(action);
+        }
+
+        String handled=getSharedPreferences("crash_log",MODE_PRIVATE)
+                .getString("last_handled","");
+        if(handled!=null && !handled.isEmpty()){
+            TextView hv=text("已捕获异常：\n"+handled);
+            hv.setTextSize(12);
+            hv.setTextColor(0xff9c1b1b);
+            hv.setTextIsSelectable(true);
+            root.addView(hv);
+        }
         root.addView(button("🟠 开启浮动取词（悬浮 + OCR）", v->enableFloatingBubble()));
         root.addView(button("⛔ 关闭桌面悬浮球", v->stopService(new Intent(this,FloatingService.class))));
         root.addView(button("🔍 打开悬浮搜索页", v->openFloatingSearch()));
@@ -236,18 +256,32 @@ public class MainActivity extends Activity {
         static final int REQ_CAPTURE=7001, REQ_NOTIFY=7002;
         @Override public void onCreate(Bundle b){ super.onCreate(b); ask(); }
         void ask(){
-            if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){
-                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},REQ_NOTIFY); return;
+            try{
+                getSharedPreferences("crash_log",MODE_PRIVATE)
+                        .edit().putString("last_action","OCR_PERMISSION_ASK").commit();
+
+                if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){
+                    requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},REQ_NOTIFY);
+                    return;
+                }
+
+                MediaProjectionManager m=(MediaProjectionManager)getSystemService(MEDIA_PROJECTION_SERVICE);
+                Intent captureIntent;
+                if(Build.VERSION.SDK_INT>=34){
+                    MediaProjectionConfig config=MediaProjectionConfig.createConfigForDefaultDisplay();
+                    captureIntent=m.createScreenCaptureIntent(config);
+                }else{
+                    captureIntent=m.createScreenCaptureIntent();
+                }
+                startActivityForResult(captureIntent,REQ_CAPTURE);
+            }catch(Throwable t){
+                String msg=t.getClass().getSimpleName()
+                        +(t.getMessage()==null?"":" · "+t.getMessage());
+                getSharedPreferences("crash_log",MODE_PRIVATE)
+                        .edit().putString("last_handled","OcrActivity.ask\n"+msg).commit();
+                Toast.makeText(this,"屏幕共享授权异常："+msg,Toast.LENGTH_LONG).show();
+                finish();
             }
-            MediaProjectionManager m=(MediaProjectionManager)getSystemService(MEDIA_PROJECTION_SERVICE);
-            Intent captureIntent;
-            if(Build.VERSION.SDK_INT>=34){
-                MediaProjectionConfig config=MediaProjectionConfig.createConfigForDefaultDisplay();
-                captureIntent=m.createScreenCaptureIntent(config);
-            }else{
-                captureIntent=m.createScreenCaptureIntent();
-            }
-            startActivityForResult(captureIntent,REQ_CAPTURE);
         }
         @Override public void onRequestPermissionsResult(int r,String[] p,int[] g){
             super.onRequestPermissionsResult(r,p,g);
@@ -454,7 +488,7 @@ public class MainActivity extends Activity {
                             .edit()
                             .putString("last",out.toString())
                             .putLong("time",System.currentTimeMillis())
-                            .apply();
+                            .commit();
                 }catch(Throwable ignored){}
 
                 if(previous!=null) previous.uncaughtException(thread,throwable);
