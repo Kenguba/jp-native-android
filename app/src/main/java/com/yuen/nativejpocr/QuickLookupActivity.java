@@ -36,6 +36,7 @@ public class QuickLookupActivity extends Activity {
     private ProgressBar aiProgress;
     private Button aiKeyButton;
     private String query;
+    private boolean closing;
 
     private int dp(int v) {
         return Math.round(v * getResources().getDisplayMetrics().density);
@@ -225,6 +226,29 @@ public class QuickLookupActivity extends Activity {
     }
 
     private void closeLookupTask() {
+        if (closing) return;
+        closing = true;
+
+        Intent source = getIntent();
+        if (source != null &&
+                source.getBooleanExtra(FloatingService.EXTRA_RETURN_TO_SEARCH, false)) {
+            String restoreQuery = source.getStringExtra(FloatingService.EXTRA_SEARCH_QUERY);
+            if (restoreQuery == null || restoreQuery.trim().isEmpty()) {
+                restoreQuery = query == null ? "" : query.trim();
+            }
+
+            Intent restore = new Intent(this, FloatingService.class)
+                    .setAction(FloatingService.ACTION_SHOW_SEARCH)
+                    .putExtra(FloatingService.EXTRA_SEARCH_QUERY, restoreQuery);
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    startForegroundService(restore);
+                } else {
+                    startService(restore);
+                }
+            } catch (Throwable ignored) {}
+        }
+
         try {
             finishAndRemoveTask();
         } catch (Throwable ignored) {
