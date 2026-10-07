@@ -60,6 +60,17 @@ public class MainActivity extends Activity {
         buildInfo.setTextColor(0xff6f7780);
         root.addView(buildInfo);
 
+        TextView aiStatus=text("Groq AI：" +
+                (BuildConfig.GROQ_API_KEY == null || BuildConfig.GROQ_API_KEY.trim().isEmpty()
+                        ? "未配置"
+                        : "已配置"));
+        aiStatus.setTextSize(14);
+        aiStatus.setTextColor(
+                BuildConfig.GROQ_API_KEY == null || BuildConfig.GROQ_API_KEY.trim().isEmpty()
+                        ? 0xffb00020
+                        : 0xff118844);
+        root.addView(aiStatus);
+
         String lastCrash=getSharedPreferences("crash_log",MODE_PRIVATE)
                 .getString("last","");
         if(lastCrash!=null && !lastCrash.trim().isEmpty()){
