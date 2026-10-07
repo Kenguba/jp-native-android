@@ -240,6 +240,7 @@ APK 文件名固定格式：
 - Deep Link 支持 `mode=fullscreen`（外部 Intent 默认）与 `mode=float`（必须显式指定）；fullscreen 仍然必须是 `TYPE_APPLICATION_OVERLAY` 覆盖层，不允许打开查词 Activity。Deep Link 中转 Activity 必须透明、无预览、无动画、空 taskAffinity，并立即 finish，视觉上保持调用方页面不变
 - `mode=fullscreen` 的 WindowManager 根层必须覆盖整个可用屏幕，并在词典白色卡片下方绘制黑色半透明 Mask；点击卡片外 Mask 必须立即关闭本次 Intent 浮层。系统返回键、Android 13+ 系统返回手势、左右边缘返回手势统一调用同一个 `handleLookupBack()`：有路由历史先返回上一条，无路由历史则关闭浮层
 - Intent 浮层顶部词头按参考视频2支持编辑态：点词头切换为输入框 + 蓝色“确认”并弹出键盘；编辑态按返回只退出编辑并收起键盘，第二次返回才继续走查询路由/关闭逻辑。OCR 触发期间蓝色悬浮球不得临时设为 INVISIBLE
+- 外部 Intent 的系统返回不能依赖 `TYPE_APPLICATION_OVERLAY` 自己接管：`LookupLinkActivity` 必须作为完全透明、无动画、不可触摸的 Back 宿主在浮层生命周期内保持存活，Android 13+ 通过 Activity 的 `OnBackInvokedDispatcher`、旧版本通过 `onBackPressed()` 把返回事件发送给 `FloatingService.ACTION_LOOKUP_BACK`；只有浮层真正关闭时 Service 才通知宿主 finish。这样视觉上没有额外页面，但系统返回手势有可靠接收者
 - 蓝色 `あ` 悬浮球本体禁止为了 Z 顺序执行 `removeView/addView`；查询过程中本体持续挂载，结果层上方使用同步代理窗口保持视觉与触控连续，避免“先消失再出现”的闪烁
 - OCR 层仅负责识别文字和返回尽量完整的原始识别文本，禁止只提取首个词、提前截取 40 字、强制判定语种或改写原文；OCR 四种文字脚本的结果选取属于识别任务，不属于语言语义判断
 - OCR 的 Latin / Chinese / Japanese / Korean `TextRecognizer` 必须跟随 `ScreenCaptureService` 生命周期复用，禁止每次框选识别都重新创建并立即销毁；Service 退出时统一释放，仍在执行的识别完成后再安全关闭

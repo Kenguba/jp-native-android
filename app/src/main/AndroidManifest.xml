@@ -65,7 +65,6 @@
             android:name=".LookupLinkActivity"
             android:exported="true"
             android:excludeFromRecents="true"
-            android:noHistory="true"
             android:finishOnTaskLaunch="true"
             android:launchMode="singleTop"
             android:taskAffinity=""

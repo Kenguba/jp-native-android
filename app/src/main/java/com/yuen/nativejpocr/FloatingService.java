@@ -34,6 +34,10 @@ public class FloatingService extends Service {
     public static final String ACTION_SHOW_SEARCH = "com.yuen.nativejpocr.SHOW_FLOATING_SEARCH";
     public static final String ACTION_SHOW_LOOKUP_OVERLAY =
             "com.yuen.nativejpocr.SHOW_LOOKUP_OVERLAY";
+    public static final String ACTION_LOOKUP_BACK =
+            "com.yuen.nativejpocr.LOOKUP_BACK";
+    public static final String ACTION_LOOKUP_HOST_FINISH =
+            "com.yuen.nativejpocr.LOOKUP_HOST_FINISH";
     public static final String EXTRA_SEARCH_QUERY = "floating_search_query";
     public static final String EXTRA_LOOKUP_QUERY = "lookup_query";
     public static final String EXTRA_LOOKUP_MODE = "lookup_mode";
@@ -1925,6 +1929,14 @@ public class FloatingService extends Service {
         lookupHeaderEdit = null;
     }
 
+    private void notifyLookupHostFinish() {
+        try {
+            Intent done = new Intent(ACTION_LOOKUP_HOST_FINISH)
+                    .setPackage(getPackageName());
+            sendBroadcast(done);
+        } catch (Throwable ignored) {}
+    }
+
     private boolean handleLookupBack() {
         if (lookupOverlay == null) return false;
 
@@ -1955,6 +1967,7 @@ public class FloatingService extends Service {
         boolean restoreSearch = lookupOverlayReturnToSearch;
         lookupRouteStack.clear();
         removeLookupOverlay(false);
+        notifyLookupHostFinish();
 
         if (restoreSearch) {
             main.postDelayed(() -> {
@@ -2119,6 +2132,14 @@ public class FloatingService extends Service {
             }
         }
 
+        if (intent != null && ACTION_LOOKUP_BACK.equals(intent.getAction())) {
+            main.post(() -> {
+                if (!handleLookupBack()) {
+                    notifyLookupHostFinish();
+                }
+            });
+        }
+
         return START_STICKY;
     }
 
@@ -2130,6 +2151,7 @@ public class FloatingService extends Service {
         hideTargetBox();
         removeSearchPanel();
         removeLookupOverlay(true);
+        notifyLookupHostFinish();
         removeResultCard();
 
         if (bubbleTopProxy != null && wm != null) {

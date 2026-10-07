@@ -1,7 +1,10 @@
 package com.yuen.nativejpocr;
 
 import android.app.Activity;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -10,13 +13,29 @@ import android.view.WindowManager;
 import android.widget.Toast;
 
 /**
- * Transparent bridge for external lookup links.
- * It forwards immediately to FloatingService and renders no page of its own.
+ * Invisible Back host for external lookup links.
+ *
+ * The Activity never renders dictionary UI. It stays transparent behind the
+ * WindowManager overlay so Android's real system Back / predictive Back gesture
+ * has an Activity dispatcher to target. FloatingService owns all visible UI.
  */
 public final class LookupLinkActivity extends Activity {
+    private android.window.OnBackInvokedCallback backCallback;
+    private boolean finishReceiverRegistered;
+
+    private final BroadcastReceiver finishReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (FloatingService.ACTION_LOOKUP_HOST_FINISH.equals(intent.getAction())) {
+                finishBridge();
+            }
+        }
+    };
+
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         suppressWindowTransition();
+        registerFinishReceiver();
+        registerSystemBack();
         forward(getIntent());
     }
 
@@ -27,14 +46,79 @@ public final class LookupLinkActivity extends Activity {
         forward(intent);
     }
 
+    @Override public void onBackPressed() {
+        if (Build.VERSION.SDK_INT < 33) {
+            requestLookupBack();
+        } else {
+            // API 33+ uses OnBackInvokedDispatcher below.
+            requestLookupBack();
+        }
+    }
+
+    @Override protected void onDestroy() {
+        if (Build.VERSION.SDK_INT >= 33 && backCallback != null) {
+            try {
+                getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
+            } catch (Throwable ignored) {}
+            backCallback = null;
+        }
+
+        if (finishReceiverRegistered) {
+            try {
+                unregisterReceiver(finishReceiver);
+            } catch (Throwable ignored) {}
+            finishReceiverRegistered = false;
+        }
+        super.onDestroy();
+    }
+
+    private void registerSystemBack() {
+        if (Build.VERSION.SDK_INT < 33) return;
+
+        backCallback = this::requestLookupBack;
+        try {
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                    backCallback);
+        } catch (Throwable ignored) {}
+    }
+
+    private void registerFinishReceiver() {
+        IntentFilter filter = new IntentFilter(FloatingService.ACTION_LOOKUP_HOST_FINISH);
+        try {
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(finishReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(finishReceiver, filter);
+            }
+            finishReceiverRegistered = true;
+        } catch (Throwable ignored) {}
+    }
+
     private void suppressWindowTransition() {
         try {
             Window w = getWindow();
             w.setBackgroundDrawableResource(android.R.color.transparent);
             w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+            // Let taps continue to be handled by the WindowManager overlay
+            // or the original app beneath it. This host only owns system Back.
             w.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
             overridePendingTransition(0, 0);
         } catch (Throwable ignored) {}
+    }
+
+    private void requestLookupBack() {
+        Intent back = new Intent(this, FloatingService.class)
+                .setAction(FloatingService.ACTION_LOOKUP_BACK);
+        try {
+            if (Build.VERSION.SDK_INT >= 26) {
+                startForegroundService(back);
+            } else {
+                startService(back);
+            }
+        } catch (Throwable ignored) {
+            finishBridge();
+        }
     }
 
     private String extractQuery(Intent source) {
@@ -60,8 +144,6 @@ public final class LookupLinkActivity extends Activity {
             if (text != null) query = text.toString().trim();
         }
 
-        // Some external callers incorrectly pass the complete intent URI as q.
-        // Recover only its nested q/query parameter instead of looking up the URI.
         if (query.startsWith("intent://") || query.startsWith("jp-native://")) {
             try {
                 Uri nested = Uri.parse(query);
@@ -92,9 +174,6 @@ public final class LookupLinkActivity extends Activity {
             }
         }
 
-        // External Intent/deep-link lookup follows the video-1 behavior:
-        // fullscreen is the default. Callers must explicitly request mode=float
-        // when they want the movable small window.
         return FloatingService.LOOKUP_MODE_FLOAT.equalsIgnoreCase(mode)
                 ? FloatingService.LOOKUP_MODE_FLOAT
                 : FloatingService.LOOKUP_MODE_FULLSCREEN;
@@ -122,14 +201,15 @@ public final class LookupLinkActivity extends Activity {
             } else {
                 startService(show);
             }
+            // IMPORTANT: do not finish here. Staying alive, fully transparent
+            // and non-touchable is what makes system Back reliably target us.
         } catch (Throwable t) {
             Toast.makeText(
                     this,
                     "查词浮层启动失败：" + t.getClass().getSimpleName(),
                     Toast.LENGTH_LONG).show();
+            finishBridge();
         }
-
-        finishBridge();
     }
 
     private void finishBridge() {
