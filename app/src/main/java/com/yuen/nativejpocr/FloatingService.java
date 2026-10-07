@@ -39,6 +39,8 @@ public class FloatingService extends Service {
     private View searchPanel;
     private View resultCard;
     private boolean projectionRequestInFlight = false;
+    private android.window.OnBackInvokedDispatcher searchBackDispatcher;
+    private android.window.OnBackInvokedCallback searchBackCallback;
 
     private final Handler main = new Handler(Looper.getMainLooper());
 
@@ -595,6 +597,28 @@ public class FloatingService extends Service {
             return;
         }
 
+        if (Build.VERSION.SDK_INT >= 33) {
+            root.post(() -> {
+                try {
+                    android.window.OnBackInvokedDispatcher dispatcher =
+                            root.findOnBackInvokedDispatcher();
+                    if (dispatcher != null && searchPanel == root) {
+                        android.window.OnBackInvokedCallback callback = () -> {
+                            markAction("SEARCH_SYSTEM_GESTURE_BACK");
+                            removeSearchPanel();
+                        };
+                        dispatcher.registerOnBackInvokedCallback(
+                                android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                                callback);
+                        searchBackDispatcher = dispatcher;
+                        searchBackCallback = callback;
+                    }
+                } catch (Throwable t) {
+                    recordHandledCrash("registerSearchBackCallback", t);
+                }
+            });
+        }
+
         markAction("SHOW_SEARCH_PANEL_UPDATE_SUGGESTIONS");
         updateSuggestions(suggestions, "");
 
@@ -893,6 +917,16 @@ public class FloatingService extends Service {
     }
 
     private void removeSearchPanel() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+                searchBackDispatcher != null &&
+                searchBackCallback != null) {
+            try {
+                searchBackDispatcher.unregisterOnBackInvokedCallback(searchBackCallback);
+            } catch (Throwable ignored) {}
+            searchBackDispatcher = null;
+            searchBackCallback = null;
+        }
+
         if (searchPanel != null && wm != null) {
             try {
                 InputMethodManager imm =
