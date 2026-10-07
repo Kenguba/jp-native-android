@@ -579,8 +579,9 @@ public class FloatingService extends Service {
         scrollLp.topMargin = dp(2);
         content.addView(scroll, scrollLp);
 
-        int flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN |
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
+        // Keep the launcher/foreground app's native status bar untouched.
+        // A TYPE_APPLICATION_OVERLAY must not lay out across the system status bar.
+        int flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
 
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
