@@ -34,6 +34,7 @@ public class QuickLookupActivity extends Activity {
 
     private TextView aiBody;
     private ProgressBar aiProgress;
+    private Button aiKeyButton;
     private String query;
 
     private int dp(int v) {
@@ -179,6 +180,35 @@ public class QuickLookupActivity extends Activity {
         aiBody.setTextIsSelectable(true);
         aiCard.addView(aiBody, new LinearLayout.LayoutParams(-1, -2));
 
+        aiKeyButton = new Button(this);
+        aiKeyButton.setAllCaps(false);
+        aiKeyButton.setText(GroqKeyStore.hasKey(this) ? "更换 Groq Key" : "配置 Groq Key");
+        LinearLayout.LayoutParams keyLp = new LinearLayout.LayoutParams(-1, dp(48));
+        keyLp.topMargin = dp(12);
+        aiCard.addView(aiKeyButton, keyLp);
+
+        aiKeyButton.setOnClickListener(v ->
+                GroqKeyStore.showEditor(this, () -> {
+                    aiKeyButton.setText(GroqKeyStore.hasKey(this)
+                            ? "更换 Groq Key"
+                            : "配置 Groq Key");
+                    AI_CACHE.clear();
+
+                    if (query == null || query.trim().isEmpty()) {
+                        aiProgress.setVisibility(View.GONE);
+                        aiBody.setText("没有查询内容。");
+                        return;
+                    }
+
+                    if (GroqKeyStore.hasKey(this)) {
+                        aiProgress.setVisibility(View.VISIBLE);
+                        aiBody.setText("正在查询 AI…");
+                        loadAi(query);
+                    } else {
+                        showAi("Groq AI 尚未配置。\n\n点击下面的“配置 Groq Key”，Key 会加密保存在本机。");
+                    }
+                }));
+
         content.addView(aiCard, cardLp);
 
         TextView footer = text("JP Native Android · 本地词典 + Groq AI", 14, 0xff777d84);
@@ -244,19 +274,27 @@ public class QuickLookupActivity extends Activity {
             return;
         }
 
-        if (BuildConfig.GROQ_API_KEY == null || BuildConfig.GROQ_API_KEY.trim().isEmpty()) {
-            showAi("Groq AI 尚未配置。\n\n请在 GitHub Actions Repository Secrets 添加 GROQ_API_KEY 后重新构建。");
+        String apiKey = GroqKeyStore.load(this);
+        if (apiKey == null || apiKey.trim().isEmpty()) {
+            showAi("Groq AI 尚未配置。\n\n点击下面的“配置 Groq Key”，Key 会使用 Android Keystore 加密后保存在本机。");
             return;
         }
 
+        final String requestKey = apiKey.trim();
         AI_EXECUTOR.execute(() -> {
             try {
-                String answer = callGroq(q);
+                String answer = callGroq(q, requestKey);
                 AI_CACHE.put(q, answer);
                 runOnUiThread(() -> showAi(answer));
             } catch (Exception e) {
                 String msg = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
-                runOnUiThread(() -> showAi("AI 查询失败：\n" + msg));
+                runOnUiThread(() -> {
+                    if (msg.contains("HTTP 401") || msg.contains("HTTP 403")) {
+                        showAi("Groq Key 无效或没有权限。\n\n请点击“更换 Groq Key”重新输入。");
+                    } else {
+                        showAi("AI 查询失败：\n" + msg);
+                    }
+                });
             }
         });
     }
@@ -267,14 +305,14 @@ public class QuickLookupActivity extends Activity {
         aiBody.setText(value);
     }
 
-    private String callGroq(String q) throws Exception {
+    private String callGroq(String q, String apiKey) throws Exception {
         URL url = new URL(BuildConfig.GROQ_BASE_URL + "/chat/completions");
         HttpURLConnection c = (HttpURLConnection)url.openConnection();
         c.setRequestMethod("POST");
         c.setConnectTimeout(60000);
         c.setReadTimeout(60000);
         c.setDoOutput(true);
-        c.setRequestProperty("Authorization", "Bearer " + BuildConfig.GROQ_API_KEY);
+        c.setRequestProperty("Authorization", "Bearer " + apiKey);
         c.setRequestProperty("Content-Type", "application/json; charset=utf-8");
 
         String systemPrompt =
