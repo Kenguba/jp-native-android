@@ -130,7 +130,7 @@ public class QuickLookupActivity extends Activity {
         content.setPadding(0, 0, 0, dp(18));
         scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
 
-        addSectionHeader(content, "日语单词总汇");
+        addSectionHeader(content, "本地词典");
 
         LinearLayout localCard = new LinearLayout(this);
         localCard.setOrientation(LinearLayout.VERTICAL);
@@ -159,7 +159,7 @@ public class QuickLookupActivity extends Activity {
             TextView missing = text(
                     query.isEmpty()
                             ? "没有收到要查询的内容。"
-                            : "本地词库暂未收录「" + query + "」。\n下面会自动使用 Groq AI 查询。",
+                            : "本地词库暂未收录该内容。\n下面会自动交由 Groq AI 分析。",
                     18, 0xff34383d);
             missing.setLineSpacing(dp(4), 1f);
             localCard.addView(missing);
@@ -378,10 +378,17 @@ public class QuickLookupActivity extends Activity {
         c.setRequestProperty("Authorization", "Bearer " + apiKey);
         c.setRequestProperty("Content-Type", "application/json; charset=utf-8");
 
+        // OCR supplies the recognized text, not a preselected language.
+        // Groq identifies the language and chooses the appropriate explanation.
         String systemPrompt =
-                "你是日语词典和翻译助手。回答必须简洁、准确、适合词典页面。"
-                + "如果查询是日语，给出读音、词性、核心中文义、常用语感和一个自然例句；"
-                + "如果查询是中文或英文，先给出自然的日语对应，再解释。不要输出思考过程。";
+                "你是多语种 OCR 文本理解与词典助手。用户输入是原始 OCR 文字或手动查询。"
+                + "请自行判断语言：日语、中文、韩语、英语或混合文本。"
+                + "不要默认输入是日语，不要把中文、英语、韩语一律翻译成日语。"
+                + "简洁地用中文给出语言判断和准确含义；单词给出读音（若合适）、词性、释义及简短例句，"
+                + "句子则给出自然中文翻译和必要的语法说明。"
+                + "对共享汉字、短词或无法确定的语言不要武断猜测，可说明歧义。"
+                + "OCR 有明显错字时可以注明疑点，但不可擅自改变原文。"
+                + "不要输出推理过程。";
 
         JSONObject body = new JSONObject();
         body.put("model", BuildConfig.GROQ_MODEL);
@@ -390,7 +397,7 @@ public class QuickLookupActivity extends Activity {
 
         JSONArray messages = new JSONArray();
         messages.put(new JSONObject().put("role", "system").put("content", systemPrompt));
-        messages.put(new JSONObject().put("role", "user").put("content", "查询：" + q));
+        messages.put(new JSONObject().put("role", "user").put("content", q));
         body.put("messages", messages);
 
         byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
