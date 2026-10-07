@@ -92,9 +92,12 @@ public final class LookupLinkActivity extends Activity {
             }
         }
 
-        return FloatingService.LOOKUP_MODE_FULLSCREEN.equalsIgnoreCase(mode)
-                ? FloatingService.LOOKUP_MODE_FULLSCREEN
-                : FloatingService.LOOKUP_MODE_FLOAT;
+        // External Intent/deep-link lookup follows the video-1 behavior:
+        // fullscreen is the default. Callers must explicitly request mode=float
+        // when they want the movable small window.
+        return FloatingService.LOOKUP_MODE_FLOAT.equalsIgnoreCase(mode)
+                ? FloatingService.LOOKUP_MODE_FLOAT
+                : FloatingService.LOOKUP_MODE_FULLSCREEN;
     }
 
     private void forward(Intent source) {

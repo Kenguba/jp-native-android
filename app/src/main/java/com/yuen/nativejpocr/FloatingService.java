@@ -88,6 +88,9 @@ public class FloatingService extends Service {
     private android.window.OnBackInvokedCallback searchBackCallback;
     private android.window.OnBackInvokedDispatcher lookupBackDispatcher;
     private android.window.OnBackInvokedCallback lookupBackCallback;
+    private EditText lookupEditor;
+    private View lookupHeaderNormal;
+    private View lookupHeaderEdit;
 
     private final Handler main = new Handler(Looper.getMainLooper());
 
@@ -589,8 +592,6 @@ public class FloatingService extends Service {
             return;
         }
 
-        if (bubble != null) bubble.setVisibility(View.INVISIBLE);
-
         Intent i = new Intent(this, MainActivity.ScreenCaptureService.class)
                 .setAction(MainActivity.ScreenCaptureService.ACT_OCR_REGION)
                 .putExtra("x", x)
@@ -598,13 +599,9 @@ public class FloatingService extends Service {
                 .putExtra("w", width)
                 .putExtra("h", height);
 
+        // The OCR target rectangle is positioned away from the bubble. Keep the
+        // bubble mounted and visible so pickup never flashes off/on.
         startService(i);
-
-        main.postDelayed(() -> {
-            if (bubble != null && bubble.getVisibility() != View.VISIBLE) {
-                bubble.setVisibility(View.VISIBLE);
-            }
-        }, 1200);
     }
 
     private void toggleSearchPanel() {
@@ -1283,6 +1280,8 @@ public class FloatingService extends Service {
 
         // Reference proportions: compact 48dp header, 46dp pronunciation row,
         // 40dp dictionary headers, and a plain 30dp footer.
+        FrameLayout headerHost = new FrameLayout(this);
+
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -1293,6 +1292,7 @@ public class FloatingService extends Service {
         title.setEllipsize(android.text.TextUtils.TruncateAt.END);
         title.setGravity(Gravity.CENTER_VERTICAL);
         title.setIncludeFontPadding(false);
+        title.setClickable(true);
         header.addView(title, new LinearLayout.LayoutParams(0, dp(48), 1));
 
         ImageView favorite = lookupIcon(
@@ -1314,7 +1314,92 @@ public class FloatingService extends Service {
             showLookupOverlay(q, returnToSearch, mode, false);
         });
 
-        panel.addView(header, new LinearLayout.LayoutParams(
+        LinearLayout editHeader = new LinearLayout(this);
+        editHeader.setOrientation(LinearLayout.HORIZONTAL);
+        editHeader.setGravity(Gravity.CENTER_VERTICAL);
+        editHeader.setPadding(dp(14), 0, dp(8), 0);
+        editHeader.setBackgroundColor(Color.WHITE);
+        editHeader.setVisibility(View.GONE);
+
+        EditText editor = new EditText(this);
+        editor.setSingleLine(true);
+        editor.setText(q);
+        editor.setTextSize(18);
+        editor.setTextColor(0xff242629);
+        editor.setSelectAllOnFocus(false);
+        editor.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
+        editor.setPadding(0, 0, dp(8), 0);
+        if (Build.VERSION.SDK_INT >= 21) {
+            editor.setBackgroundTintList(
+                    android.content.res.ColorStateList.valueOf(0xff129fe8));
+        }
+
+        TextView confirm = lookupText("确认", 15, Color.WHITE);
+        confirm.setGravity(Gravity.CENTER);
+        confirm.setIncludeFontPadding(false);
+        confirm.setBackground(bg(0xff129fe8, 4));
+
+        editHeader.addView(editor, new LinearLayout.LayoutParams(0, dp(48), 1));
+        LinearLayout.LayoutParams confirmLp =
+                new LinearLayout.LayoutParams(dp(54), dp(34));
+        confirmLp.leftMargin = dp(8);
+        editHeader.addView(confirm, confirmLp);
+
+        headerHost.addView(header, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, dp(48)));
+        headerHost.addView(editHeader, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, dp(48)));
+
+        Runnable enterEditMode = () -> {
+            lookupEditor = editor;
+            lookupHeaderNormal = header;
+            lookupHeaderEdit = editHeader;
+            header.setVisibility(View.GONE);
+            editHeader.setVisibility(View.VISIBLE);
+            editor.setText(lookupOverlayQuery);
+            editor.setSelection(editor.length());
+            editor.requestFocus();
+            InputMethodManager imm =
+                    (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
+            imm.showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT);
+        };
+        title.setOnClickListener(v -> enterEditMode.run());
+
+        Runnable submitEdit = () -> {
+            String next = editor.getText().toString().trim();
+            if (next.isEmpty()) {
+                exitLookupEditMode();
+                return;
+            }
+
+            InputMethodManager imm =
+                    (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
+            imm.hideSoftInputFromWindow(editor.getWindowToken(), 0);
+            lookupEditor = null;
+            lookupHeaderNormal = null;
+            lookupHeaderEdit = null;
+
+            if (next.equals(q)) {
+                header.setVisibility(View.VISIBLE);
+                editHeader.setVisibility(View.GONE);
+            } else {
+                showLookupOverlay(next, returnToSearch, mode, true);
+            }
+        };
+
+        confirm.setOnClickListener(v -> submitEdit.run());
+        editor.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_SEARCH ||
+                    (event != null &&
+                     event.getKeyCode() == KeyEvent.KEYCODE_ENTER &&
+                     event.getAction() == KeyEvent.ACTION_UP)) {
+                submitEdit.run();
+                return true;
+            }
+            return false;
+        });
+
+        panel.addView(headerHost, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
 
         View topDivider = new View(this);
@@ -1494,6 +1579,9 @@ public class FloatingService extends Service {
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                 PixelFormat.TRANSLUCENT);
         lookupOverlayLp.gravity = Gravity.TOP | Gravity.START;
+        lookupOverlayLp.softInputMode =
+                WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
+                WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN;
         lookupOverlayLp.x = fullscreen ? 0 : prefs.getInt(LOOKUP_X, defaultX);
         lookupOverlayLp.y = fullscreen ? 0 : prefs.getInt(LOOKUP_Y, defaultY);
         if (!fullscreen) {
@@ -1815,8 +1903,38 @@ public class FloatingService extends Service {
                 .apply();
     }
 
+    private void exitLookupEditMode() {
+        EditText editor = lookupEditor;
+        if (editor == null) return;
+
+        try {
+            InputMethodManager imm =
+                    (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
+            imm.hideSoftInputFromWindow(editor.getWindowToken(), 0);
+        } catch (Throwable ignored) {}
+
+        if (lookupHeaderNormal != null) {
+            lookupHeaderNormal.setVisibility(View.VISIBLE);
+        }
+        if (lookupHeaderEdit != null) {
+            lookupHeaderEdit.setVisibility(View.GONE);
+        }
+
+        lookupEditor = null;
+        lookupHeaderNormal = null;
+        lookupHeaderEdit = null;
+    }
+
     private boolean handleLookupBack() {
         if (lookupOverlay == null) return false;
+
+        // Match video 2: while editing the headword, Back exits edit mode
+        // and hides the IME first. It does not close/navigate the lookup yet.
+        if (lookupEditor != null) {
+            markAction("LOOKUP_BACK_EXIT_EDIT");
+            exitLookupEditMode();
+            return true;
+        }
 
         if (!lookupRouteStack.isEmpty()) {
             LookupRoute previous = lookupRouteStack.removeLast();
@@ -1870,6 +1988,9 @@ public class FloatingService extends Service {
         lookupOverlayLp = null;
         lookupOverlayQuery = "";
         lookupOverlayMode = LOOKUP_MODE_FLOAT;
+        lookupEditor = null;
+        lookupHeaderNormal = null;
+        lookupHeaderEdit = null;
         removeBubbleProxyIfUnused();
 
         if (clearRestoreState) {
