@@ -6,7 +6,6 @@ def releaseStorePath = System.getenv('ANDROID_KEYSTORE_PATH')
 def releaseStorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
 def releaseKeyAlias = System.getenv('ANDROID_KEY_ALIAS')
 def releaseKeyPassword = System.getenv('ANDROID_KEY_PASSWORD')
-def groqApiKey = System.getenv('GROQ_API_KEY') ?: ""
 def quoteBuildConfig = { String value ->
     return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
 }
@@ -22,7 +21,6 @@ android {
         versionCode ciVersionCode ? ciVersionCode.toInteger() : 4
         versionName ciVersionName ?: "0.4.0"
 
-        buildConfigField "String", "GROQ_API_KEY", quoteBuildConfig(groqApiKey)
         buildConfigField "String", "GROQ_BASE_URL", quoteBuildConfig("https://api.groq.com/openai/v1")
         buildConfigField "String", "GROQ_MODEL", quoteBuildConfig("openai/gpt-oss-20b")
     }
