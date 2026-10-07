@@ -28,6 +28,8 @@ public class FloatingService extends Service {
     private static final String CH = "floating_lookup";
     private static final int NOTIFY_ID = 51;
     public static final String ACTION_SHOW_SEARCH = "com.yuen.nativejpocr.SHOW_FLOATING_SEARCH";
+    public static final String EXTRA_SEARCH_QUERY = "floating_search_query";
+    public static final String EXTRA_RETURN_TO_SEARCH = "return_to_floating_search";
 
     private WindowManager wm;
     private View bubble;
@@ -38,6 +40,7 @@ public class FloatingService extends Service {
 
     private View searchPanel;
     private View resultCard;
+    private String currentSearchQuery = "";
     private boolean projectionRequestInFlight = false;
     private android.window.OnBackInvokedDispatcher searchBackDispatcher;
     private android.window.OnBackInvokedCallback searchBackCallback;
@@ -501,7 +504,7 @@ public class FloatingService extends Service {
         removeResultCard();
 
         BackGestureFrameLayout root = new BackGestureFrameLayout(this);
-        root.setBackgroundColor(0x8a101820);
+        root.setBackgroundColor(0x99101820);
         root.setFocusableInTouchMode(true);
         root.setOnKeyListener((v, keyCode, event) -> {
             if (keyCode == KeyEvent.KEYCODE_BACK &&
@@ -519,39 +522,41 @@ public class FloatingService extends Service {
         FrameLayout.LayoutParams contentLp = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT);
-        contentLp.leftMargin = dp(16);
-        contentLp.rightMargin = dp(16);
-        contentLp.topMargin = dp(28);
+        contentLp.leftMargin = dp(15);
+        contentLp.rightMargin = dp(15);
+        contentLp.topMargin = dp(6);
         root.addView(content, contentLp);
 
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(14), 0, dp(7), 0);
-        bar.setBackground(outline(0xff079bff, 2, 0xed18191d, 15));
-        bar.setElevation(dp(6));
+        bar.setPadding(dp(14), 0, dp(4), 0);
+        bar.setBackground(outline(0xff079bff, 1, 0xf218191d, 10));
+        bar.setElevation(dp(4));
 
         EditText input = new EditText(this);
         input.setSingleLine(true);
         input.setTextColor(0xfff4f5f7);
         input.setHintTextColor(0xff969ca6);
         input.setHint("请输入需要查找的内容");
-        input.setTextSize(22);
+        input.setTextSize(18);
         input.setBackgroundColor(Color.TRANSPARENT);
         input.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
         input.setSelectAllOnFocus(false);
         input.setPadding(0, 0, dp(8), 0);
 
-        ImageView mic = new ImageView(this);
-        mic.setImageResource(R.drawable.ic_search_mic);
-        mic.setColorFilter(0xff079bff);
-        mic.setPadding(dp(10), dp(10), dp(10), dp(10));
+        TextView clear = new TextView(this);
+        clear.setText("×");
+        clear.setTextColor(0xff079bff);
+        clear.setTextSize(31);
+        clear.setGravity(Gravity.CENTER);
+        clear.setPadding(0, 0, 0, dp(2));
 
-        bar.addView(input, new LinearLayout.LayoutParams(0, dp(64), 1));
-        bar.addView(mic, new LinearLayout.LayoutParams(dp(50), dp(64)));
+        bar.addView(input, new LinearLayout.LayoutParams(0, dp(44), 1));
+        bar.addView(clear, new LinearLayout.LayoutParams(dp(42), dp(44)));
 
         content.addView(bar, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(64)));
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(44)));
 
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -560,14 +565,14 @@ public class FloatingService extends Service {
 
         LinearLayout suggestions = new LinearLayout(this);
         suggestions.setOrientation(LinearLayout.VERTICAL);
-        suggestions.setPadding(0, dp(12), 0, dp(72));
+        suggestions.setPadding(0, dp(8), 0, dp(56));
         scroll.addView(suggestions, new ScrollView.LayoutParams(
                 ScrollView.LayoutParams.MATCH_PARENT,
                 ScrollView.LayoutParams.WRAP_CONTENT));
 
         LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1);
-        scrollLp.topMargin = dp(4);
+        scrollLp.topMargin = dp(2);
         content.addView(scroll, scrollLp);
 
         int flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN |
@@ -620,13 +625,19 @@ public class FloatingService extends Service {
         }
 
         markAction("SHOW_SEARCH_PANEL_UPDATE_SUGGESTIONS");
-        updateSuggestions(suggestions, "");
+        String initialQuery = currentSearchQuery == null ? "" : currentSearchQuery;
+        if (!initialQuery.isEmpty()) {
+            input.setText(initialQuery);
+            input.setSelection(input.length());
+        }
+        updateSuggestions(suggestions, initialQuery);
 
         input.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
 
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
-                updateSuggestions(suggestions, s == null ? "" : s.toString());
+                currentSearchQuery = s == null ? "" : s.toString();
+                updateSuggestions(suggestions, currentSearchQuery);
             }
 
             @Override public void afterTextChanged(Editable s) {}
@@ -662,8 +673,14 @@ public class FloatingService extends Service {
             return false;
         });
 
-        mic.setOnClickListener(v ->
-                Toast.makeText(this, "语音搜索入口已预留", Toast.LENGTH_SHORT).show());
+        clear.setOnClickListener(v -> {
+            if (input.length() > 0) {
+                input.setText("");
+                input.requestFocus();
+            } else {
+                removeSearchPanel();
+            }
+        });
 
         markAction("SHOW_SEARCH_PANEL_FINISH");
         root.requestFocus();
@@ -698,7 +715,7 @@ public class FloatingService extends Service {
                     suggestions.addView(createSuggestionRow(
                             word,
                             formatSubtitle(e.getValue()),
-                            true));
+                            false));
                     count++;
                     if (count >= 12) break;
                 }
@@ -730,7 +747,7 @@ public class FloatingService extends Service {
                 suggestions.addView(createSuggestionRow(
                         word,
                         formatSubtitle(d),
-                        true));
+                        false));
                 count++;
                 if (count >= 10) break;
             }
@@ -789,16 +806,18 @@ public class FloatingService extends Service {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.TOP);
-        row.setPadding(dp(4), dp(10), dp(4), dp(10));
+        row.setPadding(0, dp(4), dp(2), dp(4));
         row.setBackgroundColor(Color.TRANSPARENT);
-        row.setMinimumHeight(dp(72));
+        row.setMinimumHeight(dp(54));
 
         ImageView icon = new ImageView(this);
-        icon.setImageResource(R.drawable.ic_history_clock);
-        icon.setColorFilter(0xffc4c9d0);
-        icon.setPadding(dp(7), dp(8), dp(7), dp(8));
+        icon.setImageResource(historyStyle
+                ? R.drawable.ic_history_clock
+                : R.drawable.ic_dictionary_result);
+        icon.setColorFilter(0xffd3d9df);
+        icon.setPadding(dp(5), dp(5), dp(5), dp(5));
         LinearLayout.LayoutParams iconLp =
-                new LinearLayout.LayoutParams(dp(44), dp(48));
+                new LinearLayout.LayoutParams(dp(38), dp(40));
         row.addView(icon, iconLp);
 
         LinearLayout body = new LinearLayout(this);
@@ -808,7 +827,7 @@ public class FloatingService extends Service {
         TextView title = new TextView(this);
         title.setText(word);
         title.setTextColor(0xfff0f2f4);
-        title.setTextSize(22);
+        title.setTextSize(17);
         title.setTypeface(Typeface.DEFAULT, Typeface.NORMAL);
         title.setSingleLine(true);
         title.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -816,10 +835,10 @@ public class FloatingService extends Service {
         TextView meaning = new TextView(this);
         meaning.setText(subtitle == null ? "" : subtitle);
         meaning.setTextColor(0xff9ea5ae);
-        meaning.setTextSize(15);
+        meaning.setTextSize(13);
         meaning.setMaxLines(2);
         meaning.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        meaning.setPadding(0, dp(2), 0, 0);
+        meaning.setPadding(0, dp(1), 0, 0);
 
         body.addView(title);
         if (subtitle != null && !subtitle.isEmpty()) body.addView(meaning);
@@ -846,10 +865,15 @@ public class FloatingService extends Service {
 
     private void openQuickLookup(String q) {
         markAction("OPEN_QUICK_LOOKUP:" + q);
+        String returnQuery = currentSearchQuery == null || currentSearchQuery.trim().isEmpty()
+                ? q
+                : currentSearchQuery.trim();
         Intent i = new Intent(this, QuickLookupActivity.class)
                 .putExtra("query", q)
+                .putExtra(EXTRA_RETURN_TO_SEARCH, true)
+                .putExtra(EXTRA_SEARCH_QUERY, returnQuery)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                        | Intent.FLAG_ACTIVITY_CLEAR_TASK
+                        | Intent.FLAG_ACTIVITY_CLEAR_TOP
                         | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
 
         try {
@@ -957,10 +981,14 @@ public class FloatingService extends Service {
         if (bubble == null && Settings.canDrawOverlays(this)) showBubble();
 
         if (intent != null && ACTION_SHOW_SEARCH.equals(intent.getAction())) {
-            main.post(() -> {
+            String restoredQuery = intent.getStringExtra(EXTRA_SEARCH_QUERY);
+            if (restoredQuery != null) currentSearchQuery = restoredQuery;
+
+            long delay = restoredQuery == null ? 0L : 120L;
+            main.postDelayed(() -> {
                 if (!Settings.canDrawOverlays(this)) return;
                 if (searchPanel == null) showSearchPanel();
-            });
+            }, delay);
         }
 
         return START_STICKY;
