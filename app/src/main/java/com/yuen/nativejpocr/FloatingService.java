@@ -42,6 +42,40 @@ public class FloatingService extends Service {
 
     private final Handler main = new Handler(Looper.getMainLooper());
 
+    private void markAction(String action) {
+        try {
+            getSharedPreferences("crash_log", MODE_PRIVATE)
+                    .edit()
+                    .putString("last_action", action)
+                    .putLong("last_action_time", System.currentTimeMillis())
+                    .commit();
+        } catch (Throwable ignored) {}
+    }
+
+    private void recordHandledCrash(String where, Throwable t) {
+        try {
+            StringBuilder out = new StringBuilder();
+            out.append(where).append("\n")
+                    .append(t.getClass().getName()).append(": ")
+                    .append(t.getMessage() == null ? "" : t.getMessage()).append("\n");
+            StackTraceElement[] trace = t.getStackTrace();
+            int max = Math.min(trace.length, 32);
+            for (int i = 0; i < max; i++) {
+                out.append("  at ").append(trace[i].toString()).append("\n");
+            }
+            getSharedPreferences("crash_log", MODE_PRIVATE)
+                    .edit()
+                    .putString("last_handled", out.toString())
+                    .commit();
+        } catch (Throwable ignored) {}
+    }
+
+    private void safeToast(String message) {
+        try {
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+        } catch (Throwable ignored) {}
+    }
+
     private final BroadcastReceiver ocrReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             if (!MainActivity.ScreenCaptureService.ACTION_RESULT.equals(intent.getAction())) return;
@@ -188,7 +222,8 @@ public class FloatingService extends Service {
             boolean moved;
 
             @Override public boolean onTouch(View v, MotionEvent e) {
-                switch (e.getActionMasked()) {
+                try {
+                    switch (e.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
                         downRawX = e.getRawX();
                         downRawY = e.getRawY();
@@ -239,6 +274,7 @@ public class FloatingService extends Service {
                                 .apply();
 
                         if (!moved && System.currentTimeMillis() - downTime < 650) {
+                            markAction("BUBBLE_TAP_SHOW_SEARCH");
                             hideTargetBox();
                             toggleSearchPanel();
                         } else if (moved) {
@@ -249,8 +285,15 @@ public class FloatingService extends Service {
                             }
                         }
                         return true;
+                    }
+                    return false;
+                } catch (Throwable t) {
+                    recordHandledCrash("FloatingService.onTouch", t);
+                    safeToast("悬浮球操作异常：" + t.getClass().getSimpleName()
+                            + (t.getMessage() == null ? "" : " · " + t.getMessage()));
+                    hideTargetBox();
+                    return true;
                 }
-                return false;
             }
         });
 
@@ -349,16 +392,27 @@ public class FloatingService extends Service {
     }
 
     private void toggleSearchPanel() {
-        if (searchPanel != null) {
-            removeSearchPanel();
-            return;
+        try {
+            if (searchPanel != null) {
+                markAction("BUBBLE_TAP_CLOSE_SEARCH");
+                removeSearchPanel();
+                return;
+            }
+            markAction("SHOW_SEARCH_PANEL_BEGIN");
+            showSearchPanel();
+            markAction("SHOW_SEARCH_PANEL_OK");
+        } catch (Throwable t) {
+            searchPanel = null;
+            recordHandledCrash("toggleSearchPanel", t);
+            safeToast("搜索页异常：" + t.getClass().getSimpleName()
+                    + (t.getMessage() == null ? "" : " · " + t.getMessage()));
         }
-        showSearchPanel();
     }
 
     private void requestProjectionPermissionNow() {
         if (MainActivity.ScreenCaptureService.READY || projectionRequestInFlight) return;
         projectionRequestInFlight = true;
+        markAction("OPEN_MEDIA_PROJECTION_PERMISSION");
 
         Intent i = new Intent(this, MainActivity.OcrActivity.class)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
@@ -453,6 +507,7 @@ public class FloatingService extends Service {
                 WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN;
 
         searchPanel = root;
+        markAction("SHOW_SEARCH_PANEL_ADD_VIEW");
         try {
             wm.addView(searchPanel, lp);
         } catch (Throwable firstError) {
@@ -464,6 +519,7 @@ public class FloatingService extends Service {
             return;
         }
 
+        markAction("SHOW_SEARCH_PANEL_UPDATE_SUGGESTIONS");
         updateSuggestions(suggestions, "");
 
         input.addTextChangedListener(new TextWatcher() {
@@ -499,6 +555,7 @@ public class FloatingService extends Service {
         mic.setOnClickListener(v ->
                 Toast.makeText(this, "语音搜索入口已预留", Toast.LENGTH_SHORT).show());
 
+        markAction("SHOW_SEARCH_PANEL_FINISH");
         root.requestFocus();
         bringBubbleToFront();
     }
@@ -678,16 +735,17 @@ public class FloatingService extends Service {
     }
 
     private void openQuickLookup(String q) {
+        markAction("OPEN_QUICK_LOOKUP:" + q);
         Intent i = new Intent(this, QuickLookupActivity.class)
                 .putExtra("query", q)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 
         try {
             startActivity(i);
-        } catch (Exception e) {
-            showResultCard(
-                    "查词窗口打开失败",
-                    e.getMessage() == null ? "未知错误" : e.getMessage());
+        } catch (Throwable e) {
+            recordHandledCrash("openQuickLookup", e);
+            safeToast("查词页异常：" + e.getClass().getSimpleName()
+                    + (e.getMessage() == null ? "" : " · " + e.getMessage()));
         }
     }
 
