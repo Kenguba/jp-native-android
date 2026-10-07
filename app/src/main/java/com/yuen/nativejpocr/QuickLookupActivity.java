@@ -32,6 +32,11 @@ import java.util.concurrent.Executors;
 public class QuickLookupActivity extends Activity {
     private static final ExecutorService AI_EXECUTOR = Executors.newSingleThreadExecutor();
     private static final Map<String, String> AI_CACHE = new ConcurrentHashMap<>();
+    private static final String POPUP_WINDOW_PREFS = "quick_lookup_popup_window";
+    private static final String POPUP_WIDTH = "width";
+    private static final String POPUP_HEIGHT = "height";
+    private static final String POPUP_X = "x";
+    private static final String POPUP_Y = "y";
 
     private TextView aiBody;
     private ProgressBar aiProgress;
@@ -220,7 +225,27 @@ public class QuickLookupActivity extends Activity {
         content.addView(footer);
 
         panel.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        setContentView(panel);
+
+        if (popupMode) {
+            FrameLayout popupRoot = new FrameLayout(this);
+            popupRoot.addView(panel, new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT));
+
+            TextView resizeHandle = text("↘", 24, 0xff8a8f96);
+            resizeHandle.setGravity(Gravity.CENTER);
+            resizeHandle.setContentDescription("拖动调整窗口大小");
+            resizeHandle.setBackgroundColor(Color.TRANSPARENT);
+
+            FrameLayout.LayoutParams resizeLp = new FrameLayout.LayoutParams(dp(44), dp(44));
+            resizeLp.gravity = Gravity.END | Gravity.BOTTOM;
+            popupRoot.addView(resizeHandle, resizeLp);
+
+            setContentView(popupRoot);
+            installPopupWindowGestures(header, title, resizeHandle);
+        } else {
+            setContentView(panel);
+        }
 
         if (query.isEmpty()) {
             aiProgress.setVisibility(View.GONE);
@@ -281,10 +306,25 @@ public class QuickLookupActivity extends Activity {
             w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
 
             android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+            int minWidth = dp(240);
+            int minHeight = dp(260);
+            int maxWidth = Math.max(minWidth, dm.widthPixels - dp(16));
+            int maxHeight = Math.max(minHeight, dm.heightPixels - dp(32));
+            int defaultWidth = Math.min(maxWidth, Math.min(dm.widthPixels - dp(24), dp(540)));
+            int defaultHeight = Math.min(
+                    maxHeight,
+                    Math.max(dp(360), Math.round(dm.heightPixels * 0.78f)));
+
+            android.content.SharedPreferences prefs =
+                    getSharedPreferences(POPUP_WINDOW_PREFS, MODE_PRIVATE);
+
             WindowManager.LayoutParams lp = w.getAttributes();
-            lp.width = Math.min(dm.widthPixels - dp(24), dp(540));
-            lp.height = Math.max(dp(360), Math.round(dm.heightPixels * 0.78f));
+            lp.width = clamp(prefs.getInt(POPUP_WIDTH, defaultWidth), minWidth, maxWidth);
+            lp.height = clamp(prefs.getInt(POPUP_HEIGHT, defaultHeight), minHeight, maxHeight);
             lp.gravity = Gravity.CENTER;
+            lp.x = prefs.getInt(POPUP_X, 0);
+            lp.y = prefs.getInt(POPUP_Y, 0);
+            clampPopupPosition(lp, dm.widthPixels, dm.heightPixels);
             lp.dimAmount = 0.35f;
             w.setAttributes(lp);
 
@@ -294,6 +334,148 @@ public class QuickLookupActivity extends Activity {
 
         w.setStatusBarColor(0xffeaf7ff);
         w.setNavigationBarColor(Color.WHITE);
+    }
+
+    private void installPopupWindowGestures(
+            View header,
+            View title,
+            View resizeHandle) {
+        if (!popupMode) return;
+
+        final android.view.View.OnTouchListener dragListener =
+                new android.view.View.OnTouchListener() {
+                    float downRawX;
+                    float downRawY;
+                    int startWindowX;
+                    int startWindowY;
+
+                    @Override public boolean onTouch(View v, android.view.MotionEvent event) {
+                        Window w = getWindow();
+                        WindowManager.LayoutParams lp = w.getAttributes();
+
+                        switch (event.getActionMasked()) {
+                            case android.view.MotionEvent.ACTION_DOWN:
+                                downRawX = event.getRawX();
+                                downRawY = event.getRawY();
+                                startWindowX = lp.x;
+                                startWindowY = lp.y;
+                                return true;
+
+                            case android.view.MotionEvent.ACTION_MOVE:
+                                android.util.DisplayMetrics dm =
+                                        getResources().getDisplayMetrics();
+                                lp.x = startWindowX + Math.round(event.getRawX() - downRawX);
+                                lp.y = startWindowY + Math.round(event.getRawY() - downRawY);
+                                clampPopupPosition(lp, dm.widthPixels, dm.heightPixels);
+                                w.setAttributes(lp);
+                                return true;
+
+                            case android.view.MotionEvent.ACTION_UP:
+                            case android.view.MotionEvent.ACTION_CANCEL:
+                                savePopupWindowBounds();
+                                return true;
+
+                            default:
+                                return true;
+                        }
+                    }
+                };
+
+        header.setOnTouchListener(dragListener);
+        title.setOnTouchListener(dragListener);
+
+        resizeHandle.setOnTouchListener(new android.view.View.OnTouchListener() {
+            float downRawX;
+            float downRawY;
+            int startWidth;
+            int startHeight;
+            int startWindowX;
+            int startWindowY;
+
+            @Override public boolean onTouch(View v, android.view.MotionEvent event) {
+                Window w = getWindow();
+                WindowManager.LayoutParams lp = w.getAttributes();
+
+                switch (event.getActionMasked()) {
+                    case android.view.MotionEvent.ACTION_DOWN:
+                        downRawX = event.getRawX();
+                        downRawY = event.getRawY();
+                        startWidth = lp.width;
+                        startHeight = lp.height;
+                        startWindowX = lp.x;
+                        startWindowY = lp.y;
+                        return true;
+
+                    case android.view.MotionEvent.ACTION_MOVE:
+                        android.util.DisplayMetrics dm =
+                                getResources().getDisplayMetrics();
+                        int minWidth = dp(240);
+                        int minHeight = dp(260);
+                        int maxWidth = Math.max(minWidth, dm.widthPixels - dp(16));
+                        int maxHeight = Math.max(minHeight, dm.heightPixels - dp(32));
+
+                        int requestedWidth = startWidth
+                                + Math.round(event.getRawX() - downRawX);
+                        int requestedHeight = startHeight
+                                + Math.round(event.getRawY() - downRawY);
+
+                        int newWidth = clamp(requestedWidth, minWidth, maxWidth);
+                        int newHeight = clamp(requestedHeight, minHeight, maxHeight);
+
+                        // Gravity.CENTER normally resizes around the center.
+                        // Shift the center by half the delta so the opposite
+                        // top-left corner stays visually anchored while dragging.
+                        lp.x = startWindowX + Math.round((newWidth - startWidth) / 2f);
+                        lp.y = startWindowY + Math.round((newHeight - startHeight) / 2f);
+                        lp.width = newWidth;
+                        lp.height = newHeight;
+                        clampPopupPosition(lp, dm.widthPixels, dm.heightPixels);
+                        w.setAttributes(lp);
+                        return true;
+
+                    case android.view.MotionEvent.ACTION_UP:
+                    case android.view.MotionEvent.ACTION_CANCEL:
+                        savePopupWindowBounds();
+                        return true;
+
+                    default:
+                        return true;
+                }
+            }
+        });
+    }
+
+    private int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private void clampPopupPosition(
+            WindowManager.LayoutParams lp,
+            int screenWidth,
+            int screenHeight) {
+        int margin = dp(8);
+        int horizontalTravel = Math.max(
+                0,
+                (screenWidth - lp.width) / 2 - margin);
+        int verticalTravel = Math.max(
+                0,
+                (screenHeight - lp.height) / 2 - margin);
+
+        lp.x = clamp(lp.x, -horizontalTravel, horizontalTravel);
+        lp.y = clamp(lp.y, -verticalTravel, verticalTravel);
+    }
+
+    private void savePopupWindowBounds() {
+        if (!popupMode) return;
+
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        getSharedPreferences(POPUP_WINDOW_PREFS, MODE_PRIVATE)
+                .edit()
+                .putInt(POPUP_WIDTH, lp.width)
+                .putInt(POPUP_HEIGHT, lp.height)
+                .putInt(POPUP_X, lp.x)
+                .putInt(POPUP_Y, lp.y)
+                .apply();
     }
 
     private void addSectionHeader(LinearLayout parent, String title) {
