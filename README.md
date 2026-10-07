@@ -1,6 +1,6 @@
 # JP Native Android
 
-这是独立的日文 OCR 原生 Android 应用。
+这是独立的中 / 英 / 日多语种 OCR + 日语词典原生 Android 应用。
 
 ## 工程规则唯一来源（Single Source of Truth）
 
@@ -227,7 +227,7 @@ APK 文件名固定格式：
 - 可拖拽悬浮取词按钮
 - 视频风格半透明悬浮搜索页
 - MediaProjection 屏幕捕获
-- ML Kit 日文 OCR
+- ML Kit 中 / 英 / 日多语种 OCR（Latin / Chinese / Japanese）
 - 区域 OCR 取词
 - Intent 快速词条弹窗
 - PROCESS_TEXT / SEND
@@ -281,7 +281,7 @@ APK 文件名固定格式：
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
 
-如果这 4 个 Secrets 尚未配置，Workflow 只生成临时 Debug Artifact，不发布正式 Release。Secrets 配好后，重新运行 Workflow 即可生成固定签名的 4 个正式 APK。
+如果这 4 个 Secrets 尚未配置，Workflow 只生成临时 Debug Artifact，不发布正式 Release。Secrets 配好后，重新运行 Workflow 即可生成固定签名的正式 APK。
 
 > 注意：GitHub Actions 的具体实现必须服从本 README 的版本与 APK 命名规则。Android `versionCode` 仍需使用独立的纯数字永久递增序列。
 
