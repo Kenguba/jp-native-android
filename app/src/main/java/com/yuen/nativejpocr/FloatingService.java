@@ -23,14 +23,30 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class FloatingService extends Service {
     private static final String CH = "floating_lookup";
     private static final int NOTIFY_ID = 51;
     public static final String ACTION_SHOW_SEARCH = "com.yuen.nativejpocr.SHOW_FLOATING_SEARCH";
+    public static final String ACTION_SHOW_LOOKUP_OVERLAY =
+            "com.yuen.nativejpocr.SHOW_LOOKUP_OVERLAY";
     public static final String EXTRA_SEARCH_QUERY = "floating_search_query";
+    public static final String EXTRA_LOOKUP_QUERY = "lookup_query";
     public static final String EXTRA_RETURN_TO_SEARCH = "return_to_floating_search";
     public static final String EXTRA_POPUP_MODE = "quick_lookup_popup";
+
+    private static final String LOOKUP_WINDOW_PREFS = "lookup_overlay_window";
+    private static final String LOOKUP_WIDTH = "width";
+    private static final String LOOKUP_HEIGHT = "height";
+    private static final String LOOKUP_X = "x";
+    private static final String LOOKUP_Y = "y";
+    private static final ExecutorService LOOKUP_AI_EXECUTOR =
+            Executors.newSingleThreadExecutor();
+    private static final Map<String, String> LOOKUP_AI_CACHE =
+            new ConcurrentHashMap<>();
 
     private WindowManager wm;
     private View bubble;
@@ -41,6 +57,10 @@ public class FloatingService extends Service {
 
     private View searchPanel;
     private View resultCard;
+    private View lookupOverlay;
+    private WindowManager.LayoutParams lookupOverlayLp;
+    private String lookupOverlayQuery = "";
+    private boolean lookupOverlayReturnToSearch;
     private String currentSearchQuery = "";
     private boolean projectionRequestInFlight = false;
     private android.window.OnBackInvokedDispatcher searchBackDispatcher;
@@ -869,38 +889,509 @@ public class FloatingService extends Service {
     }
 
     private void openQuickLookup(String q) {
-        openQuickLookup(q, true, false);
+        dispatchLookupOverlay(q, true);
     }
 
     private void openOcrLookupPopup(String q) {
-        openQuickLookup(q, false, true);
+        dispatchLookupOverlay(q, false);
     }
 
-    private void openQuickLookup(String q, boolean returnToSearch, boolean popupMode) {
-        markAction((popupMode ? "OPEN_OCR_POPUP:" : "OPEN_QUICK_LOOKUP:") + q);
+    private void dispatchLookupOverlay(String q, boolean returnToSearch) {
+        String value = q == null ? "" : q.trim();
+        if (value.isEmpty()) return;
 
-        Intent i = new Intent(this, QuickLookupActivity.class)
-                .putExtra("query", q)
-                .putExtra(EXTRA_RETURN_TO_SEARCH, returnToSearch)
-                .putExtra(EXTRA_POPUP_MODE, popupMode)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                        | Intent.FLAG_ACTIVITY_CLEAR_TOP
-                        | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+        markAction("INTENT_SHOW_LOOKUP_OVERLAY:" + value);
+
+        Intent i = new Intent(this, FloatingService.class)
+                .setAction(ACTION_SHOW_LOOKUP_OVERLAY)
+                .putExtra(EXTRA_LOOKUP_QUERY, value)
+                .putExtra(EXTRA_RETURN_TO_SEARCH, returnToSearch);
 
         if (returnToSearch) {
             String returnQuery = currentSearchQuery == null || currentSearchQuery.trim().isEmpty()
-                    ? q
+                    ? value
                     : currentSearchQuery.trim();
             i.putExtra(EXTRA_SEARCH_QUERY, returnQuery);
         }
 
         try {
-            startActivity(i);
+            startService(i);
         } catch (Throwable e) {
-            recordHandledCrash("openQuickLookup", e);
-            safeToast("查词弹窗异常：" + e.getClass().getSimpleName()
+            recordHandledCrash("dispatchLookupOverlay", e);
+            safeToast("查词浮层打开失败：" + e.getClass().getSimpleName()
                     + (e.getMessage() == null ? "" : " · " + e.getMessage()));
         }
+    }
+
+    private TextView lookupText(String value, float size, int color) {
+        TextView t = new TextView(this);
+        t.setText(value);
+        t.setTextSize(size);
+        t.setTextColor(color);
+        return t;
+    }
+
+    private void showLookupOverlay(String rawQuery, boolean returnToSearch) {
+        if (!Settings.canDrawOverlays(this) || wm == null) {
+            safeToast("没有悬浮窗权限，无法显示查词浮层");
+            return;
+        }
+
+        String q = rawQuery == null ? "" : rawQuery.trim();
+        if (q.isEmpty()) return;
+
+        removeLookupOverlay(false);
+        removeSearchPanel();
+        removeResultCard();
+
+        lookupOverlayQuery = q;
+        lookupOverlayReturnToSearch = returnToSearch;
+        saveLookupHistory(q);
+
+        FrameLayout root = new FrameLayout(this);
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackground(bg(Color.WHITE, 18));
+        panel.setElevation(dp(16));
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(dp(18), dp(10), dp(8), dp(8));
+
+        TextView title = lookupText(q, 27, 0xff202124);
+        title.setSingleLine(true);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        header.addView(title, new LinearLayout.LayoutParams(0, dp(58), 1));
+
+        TextView close = lookupText("×", 32, 0xff202124);
+        close.setGravity(Gravity.CENTER);
+        close.setContentDescription("关闭查词浮层");
+        close.setOnClickListener(v -> closeLookupOverlay());
+        header.addView(close, new LinearLayout.LayoutParams(dp(54), dp(54)));
+
+        panel.addView(header, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(70)));
+
+        View divider = new View(this);
+        divider.setBackgroundColor(0xffe6e8eb);
+        panel.addView(divider, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(1)));
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setVerticalScrollBarEnabled(false);
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(0, 0, 0, dp(18));
+        scroll.addView(content, new ScrollView.LayoutParams(
+                ScrollView.LayoutParams.MATCH_PARENT,
+                ScrollView.LayoutParams.WRAP_CONTENT));
+
+        addLookupSectionHeader(content, "本地词典");
+
+        LinearLayout localCard = new LinearLayout(this);
+        localCard.setOrientation(LinearLayout.VERTICAL);
+        localCard.setPadding(dp(18), dp(16), dp(18), dp(18));
+        localCard.setBackground(bg(0xffe8f8ff, 14));
+
+        LinearLayout.LayoutParams cardLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        cardLp.leftMargin = dp(16);
+        cardLp.rightMargin = dp(16);
+        cardLp.topMargin = dp(12);
+        cardLp.bottomMargin = dp(14);
+
+        String[] local = findLocalLookup(q);
+        if (local != null) {
+            TextView word = lookupText(q, 24, 0xff00a6a6);
+            word.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            localCard.addView(word);
+
+            TextView meta = lookupText(
+                    local[0] + " · " + local[1] + " · " + local[2],
+                    15,
+                    0xff596168);
+            meta.setPadding(0, dp(8), 0, dp(10));
+            localCard.addView(meta);
+
+            TextView meaning = lookupText(local[3], 18, 0xff17191c);
+            meaning.setLineSpacing(dp(3), 1f);
+            localCard.addView(meaning);
+        } else {
+            TextView missing = lookupText(
+                    "本地词库暂未收录该内容。\n下面会自动交由 Groq AI 分析。",
+                    17,
+                    0xff34383d);
+            missing.setLineSpacing(dp(4), 1f);
+            localCard.addView(missing);
+        }
+        content.addView(localCard, cardLp);
+
+        addLookupSectionHeader(content, "Groq AI");
+
+        LinearLayout aiCard = new LinearLayout(this);
+        aiCard.setOrientation(LinearLayout.VERTICAL);
+        aiCard.setPadding(dp(18), dp(16), dp(18), dp(20));
+        aiCard.setBackground(bg(0xfff7f8fa, 14));
+
+        ProgressBar progress = new ProgressBar(this);
+        progress.setIndeterminate(true);
+        aiCard.addView(progress, new LinearLayout.LayoutParams(dp(30), dp(30)));
+
+        TextView aiBody = lookupText("正在查询 AI…", 17, 0xff202327);
+        aiBody.setPadding(0, dp(10), 0, 0);
+        aiBody.setLineSpacing(dp(5), 1f);
+        aiBody.setTextIsSelectable(true);
+        aiCard.addView(aiBody, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        content.addView(aiCard, cardLp);
+
+        TextView footer = lookupText(
+                "JP Native Android · Intent 浮层查词",
+                13,
+                0xff777d84);
+        footer.setGravity(Gravity.CENTER);
+        footer.setPadding(dp(12), dp(14), dp(12), dp(6));
+        content.addView(footer);
+
+        panel.addView(scroll, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1));
+
+        root.addView(panel, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
+
+        TextView resize = lookupText("↘", 24, 0xff7b8188);
+        resize.setGravity(Gravity.CENTER);
+        resize.setContentDescription("拖动调整查词浮层大小");
+        FrameLayout.LayoutParams resizeLp = new FrameLayout.LayoutParams(dp(44), dp(44));
+        resizeLp.gravity = Gravity.END | Gravity.BOTTOM;
+        root.addView(resize, resizeLp);
+
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        int minWidth = dp(240);
+        int minHeight = dp(260);
+        int maxWidth = Math.max(minWidth, dm.widthPixels - dp(16));
+        int maxHeight = Math.max(minHeight, dm.heightPixels - dp(40));
+        int defaultWidth = Math.min(maxWidth, Math.min(dm.widthPixels - dp(24), dp(540)));
+        int defaultHeight = Math.min(
+                maxHeight,
+                Math.max(dp(360), Math.round(dm.heightPixels * 0.74f)));
+
+        SharedPreferences prefs = getSharedPreferences(LOOKUP_WINDOW_PREFS, MODE_PRIVATE);
+        int width = clampLookup(
+                prefs.getInt(LOOKUP_WIDTH, defaultWidth), minWidth, maxWidth);
+        int height = clampLookup(
+                prefs.getInt(LOOKUP_HEIGHT, defaultHeight), minHeight, maxHeight);
+
+        int defaultX = Math.max(dp(8), (dm.widthPixels - width) / 2);
+        int defaultY = Math.max(dp(12), (dm.heightPixels - height) / 2);
+
+        lookupOverlayLp = new WindowManager.LayoutParams(
+                width,
+                height,
+                overlayType(),
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT);
+        lookupOverlayLp.gravity = Gravity.TOP | Gravity.START;
+        lookupOverlayLp.x = prefs.getInt(LOOKUP_X, defaultX);
+        lookupOverlayLp.y = prefs.getInt(LOOKUP_Y, defaultY);
+        clampLookupBounds(lookupOverlayLp, dm.widthPixels, dm.heightPixels);
+
+        lookupOverlay = root;
+        installLookupOverlayGestures(header, title, resize);
+
+        try {
+            wm.addView(root, lookupOverlayLp);
+        } catch (Throwable e) {
+            lookupOverlay = null;
+            lookupOverlayLp = null;
+            recordHandledCrash("showLookupOverlay.addView", e);
+            safeToast("查词浮层打开失败：" + e.getClass().getSimpleName());
+            return;
+        }
+
+        loadLookupAi(q, root, progress, aiBody);
+    }
+
+    private void addLookupSectionHeader(LinearLayout parent, String label) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(18), dp(10), dp(18), dp(10));
+        row.setBackgroundColor(0xfff2f3f5);
+
+        TextView t = lookupText(label, 17, 0xff30343a);
+        row.addView(t, new LinearLayout.LayoutParams(
+                0, dp(40), 1));
+
+        TextView arrow = lookupText("⌃", 20, 0xffaeb3b9);
+        arrow.setGravity(Gravity.CENTER);
+        row.addView(arrow, new LinearLayout.LayoutParams(dp(40), dp(40)));
+
+        parent.addView(row, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(58)));
+    }
+
+    private String[] findLocalLookup(String q) {
+        if (q == null || q.trim().isEmpty()) return null;
+
+        String clean = q.trim();
+        String lower = clean.toLowerCase(Locale.ROOT);
+        for (Map.Entry<String, String[]> e : MainActivity.WORDS.entrySet()) {
+            String[] d = e.getValue();
+            if (e.getKey().equals(clean) ||
+                    e.getKey().contains(clean) ||
+                    d[0].equals(clean) ||
+                    d[0].contains(clean) ||
+                    d[1].toLowerCase(Locale.ROOT).contains(lower)) {
+                return d;
+            }
+        }
+        return null;
+    }
+
+    private void loadLookupAi(
+            String q,
+            View owner,
+            ProgressBar progress,
+            TextView aiBody) {
+        String cached = LOOKUP_AI_CACHE.get(q);
+        if (cached != null) {
+            progress.setVisibility(View.GONE);
+            aiBody.setText(cached);
+            return;
+        }
+
+        String apiKey = GroqKeyStore.load(this);
+        if (apiKey == null || apiKey.trim().isEmpty()) {
+            progress.setVisibility(View.GONE);
+            aiBody.setText(
+                    "Groq AI 尚未配置。请先通过应用内的 Groq Key 配置保存 Key，"
+                            + "之后 OCR 浮层会直接在当前应用上方查询。");
+            return;
+        }
+
+        final String requestKey = apiKey.trim();
+        LOOKUP_AI_EXECUTOR.execute(() -> {
+            try {
+                String answer = GroqClient.query(q, requestKey);
+                LOOKUP_AI_CACHE.put(q, answer);
+                main.post(() -> {
+                    if (lookupOverlay != owner) return;
+                    progress.setVisibility(View.GONE);
+                    aiBody.setText(answer);
+                });
+            } catch (Exception e) {
+                String msg = e.getMessage() == null
+                        ? e.getClass().getSimpleName()
+                        : e.getMessage();
+                main.post(() -> {
+                    if (lookupOverlay != owner) return;
+                    progress.setVisibility(View.GONE);
+                    if (msg.contains("HTTP 401") || msg.contains("HTTP 403")) {
+                        aiBody.setText("Groq Key 无效或没有权限，请重新配置 Key。");
+                    } else {
+                        aiBody.setText("AI 查询失败：\n" + msg);
+                    }
+                });
+            }
+        });
+    }
+
+    private void installLookupOverlayGestures(
+            View header,
+            View title,
+            View resizeHandle) {
+        View.OnTouchListener drag = new View.OnTouchListener() {
+            float downRawX;
+            float downRawY;
+            int startX;
+            int startY;
+
+            @Override public boolean onTouch(View v, MotionEvent e) {
+                if (lookupOverlay == null || lookupOverlayLp == null) return false;
+
+                switch (e.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        downRawX = e.getRawX();
+                        downRawY = e.getRawY();
+                        startX = lookupOverlayLp.x;
+                        startY = lookupOverlayLp.y;
+                        return true;
+
+                    case MotionEvent.ACTION_MOVE:
+                        DisplayMetrics dm = getResources().getDisplayMetrics();
+                        lookupOverlayLp.x =
+                                startX + Math.round(e.getRawX() - downRawX);
+                        lookupOverlayLp.y =
+                                startY + Math.round(e.getRawY() - downRawY);
+                        clampLookupBounds(
+                                lookupOverlayLp, dm.widthPixels, dm.heightPixels);
+                        try {
+                            wm.updateViewLayout(lookupOverlay, lookupOverlayLp);
+                        } catch (Exception ignored) {}
+                        return true;
+
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        saveLookupOverlayBounds();
+                        return true;
+
+                    default:
+                        return true;
+                }
+            }
+        };
+
+        header.setOnTouchListener(drag);
+        title.setOnTouchListener(drag);
+
+        resizeHandle.setOnTouchListener(new View.OnTouchListener() {
+            float downRawX;
+            float downRawY;
+            int startWidth;
+            int startHeight;
+
+            @Override public boolean onTouch(View v, MotionEvent e) {
+                if (lookupOverlay == null || lookupOverlayLp == null) return false;
+
+                switch (e.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        downRawX = e.getRawX();
+                        downRawY = e.getRawY();
+                        startWidth = lookupOverlayLp.width;
+                        startHeight = lookupOverlayLp.height;
+                        return true;
+
+                    case MotionEvent.ACTION_MOVE:
+                        DisplayMetrics dm = getResources().getDisplayMetrics();
+                        int minWidth = dp(240);
+                        int minHeight = dp(260);
+                        int maxWidth = Math.max(minWidth, dm.widthPixels - dp(16));
+                        int maxHeight = Math.max(minHeight, dm.heightPixels - dp(40));
+
+                        lookupOverlayLp.width = clampLookup(
+                                startWidth + Math.round(e.getRawX() - downRawX),
+                                minWidth,
+                                maxWidth);
+                        lookupOverlayLp.height = clampLookup(
+                                startHeight + Math.round(e.getRawY() - downRawY),
+                                minHeight,
+                                maxHeight);
+                        clampLookupBounds(
+                                lookupOverlayLp, dm.widthPixels, dm.heightPixels);
+                        try {
+                            wm.updateViewLayout(lookupOverlay, lookupOverlayLp);
+                        } catch (Exception ignored) {}
+                        return true;
+
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_CANCEL:
+                        saveLookupOverlayBounds();
+                        return true;
+
+                    default:
+                        return true;
+                }
+            }
+        });
+    }
+
+    private int clampLookup(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private void clampLookupBounds(
+            WindowManager.LayoutParams lp,
+            int screenWidth,
+            int screenHeight) {
+        int margin = dp(8);
+        int maxX = Math.max(margin, screenWidth - lp.width - margin);
+        int maxY = Math.max(margin, screenHeight - lp.height - margin);
+        lp.x = clampLookup(lp.x, margin, maxX);
+        lp.y = clampLookup(lp.y, margin, maxY);
+    }
+
+    private void saveLookupOverlayBounds() {
+        if (lookupOverlayLp == null) return;
+
+        getSharedPreferences(LOOKUP_WINDOW_PREFS, MODE_PRIVATE)
+                .edit()
+                .putInt(LOOKUP_WIDTH, lookupOverlayLp.width)
+                .putInt(LOOKUP_HEIGHT, lookupOverlayLp.height)
+                .putInt(LOOKUP_X, lookupOverlayLp.x)
+                .putInt(LOOKUP_Y, lookupOverlayLp.y)
+                .apply();
+    }
+
+    private void saveLookupHistory(String raw) {
+        if (raw == null) return;
+        String value = raw.replace('\n', ' ').replace('\r', ' ').trim();
+        if (value.isEmpty()) return;
+        if (value.length() > 80) value = value.substring(0, 80);
+
+        String saved = getSharedPreferences("lookup_history", MODE_PRIVATE)
+                .getString("items", "");
+
+        LinkedHashSet<String> ordered = new LinkedHashSet<>();
+        ordered.add(value);
+        if (saved != null && !saved.isEmpty()) {
+            for (String line : saved.split("\\n")) {
+                String item = line.trim();
+                if (!item.isEmpty()) ordered.add(item);
+                if (ordered.size() >= 20) break;
+            }
+        }
+
+        StringBuilder out = new StringBuilder();
+        int count = 0;
+        for (String item : ordered) {
+            if (out.length() > 0) out.append('\n');
+            out.append(item);
+            count++;
+            if (count >= 20) break;
+        }
+
+        getSharedPreferences("lookup_history", MODE_PRIVATE)
+                .edit()
+                .putString("items", out.toString())
+                .apply();
+    }
+
+    private void closeLookupOverlay() {
+        boolean restoreSearch = lookupOverlayReturnToSearch;
+        removeLookupOverlay(false);
+
+        if (restoreSearch) {
+            main.postDelayed(() -> {
+                if (Settings.canDrawOverlays(this) && searchPanel == null) {
+                    showSearchPanel();
+                }
+            }, 80);
+        }
+    }
+
+    private void removeLookupOverlay(boolean clearRestoreState) {
+        saveLookupOverlayBounds();
+
+        if (lookupOverlay != null && wm != null) {
+            try {
+                wm.removeView(lookupOverlay);
+            } catch (Exception ignored) {}
+        }
+
+        lookupOverlay = null;
+        lookupOverlayLp = null;
+        lookupOverlayQuery = "";
+
+        if (clearRestoreState) lookupOverlayReturnToSearch = false;
     }
 
     private void showResultCard(String title, String body) {
@@ -1009,6 +1500,18 @@ public class FloatingService extends Service {
             }, delay);
         }
 
+        if (intent != null && ACTION_SHOW_LOOKUP_OVERLAY.equals(intent.getAction())) {
+            String q = intent.getStringExtra(EXTRA_LOOKUP_QUERY);
+            boolean returnToSearch =
+                    intent.getBooleanExtra(EXTRA_RETURN_TO_SEARCH, false);
+            String restoredQuery = intent.getStringExtra(EXTRA_SEARCH_QUERY);
+            if (restoredQuery != null) currentSearchQuery = restoredQuery;
+
+            if (q != null && !q.trim().isEmpty()) {
+                main.post(() -> showLookupOverlay(q, returnToSearch));
+            }
+        }
+
         return START_STICKY;
     }
 
@@ -1019,6 +1522,7 @@ public class FloatingService extends Service {
 
         hideTargetBox();
         removeSearchPanel();
+        removeLookupOverlay(true);
         removeResultCard();
 
         if (bubble != null && wm != null) {

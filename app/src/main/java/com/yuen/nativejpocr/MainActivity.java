@@ -482,6 +482,18 @@ public class MainActivity extends Activity {
         }
 
         void sendOcrResult(String text,String error){
+            if(text!=null && error==null){
+                Intent show=new Intent(this,FloatingService.class)
+                        .setAction(FloatingService.ACTION_SHOW_LOOKUP_OVERLAY)
+                        .putExtra(FloatingService.EXTRA_LOOKUP_QUERY,text)
+                        .putExtra(FloatingService.EXTRA_RETURN_TO_SEARCH,false);
+                try{
+                    if(Build.VERSION.SDK_INT>=26) startForegroundService(show);
+                    else startService(show);
+                    return;
+                }catch(Throwable ignored){}
+            }
+
             Intent out=new Intent(ACTION_RESULT).setPackage(getPackageName());
             if(text!=null) out.putExtra("text",text);
             if(error!=null) out.putExtra("error",error);
