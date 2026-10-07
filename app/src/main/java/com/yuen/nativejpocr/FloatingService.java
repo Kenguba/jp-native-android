@@ -86,6 +86,8 @@ public class FloatingService extends Service {
     private boolean projectionRequestInFlight = false;
     private android.window.OnBackInvokedDispatcher searchBackDispatcher;
     private android.window.OnBackInvokedCallback searchBackCallback;
+    private android.window.OnBackInvokedDispatcher lookupBackDispatcher;
+    private android.window.OnBackInvokedCallback lookupBackCallback;
 
     private final Handler main = new Handler(Looper.getMainLooper());
 
@@ -293,7 +295,8 @@ public class FloatingService extends Service {
     private final class LookupOverlayFrameLayout extends FrameLayout {
         private float edgeDownX;
         private float edgeDownY;
-        private boolean trackingLeftBack;
+        private boolean trackingEdgeBack;
+        private boolean edgeFromLeft;
         private boolean backConsumed;
 
         LookupOverlayFrameLayout(Context context) {
@@ -302,16 +305,23 @@ public class FloatingService extends Service {
             setFocusableInTouchMode(true);
         }
 
+        private boolean isFromEdge(float x) {
+            int edge = dp(34);
+            return x <= edge || x >= Math.max(edge, getWidth() - edge);
+        }
+
         private boolean isBackSwipe(float x, float y) {
             float dx = x - edgeDownX;
             float dy = y - edgeDownY;
-            return dx >= dp(70) && Math.abs(dx) > Math.abs(dy) * 1.15f;
+            boolean inward = edgeFromLeft ? dx >= dp(70) : dx <= -dp(70);
+            return inward && Math.abs(dx) > Math.abs(dy) * 1.15f;
         }
 
         @Override public boolean dispatchKeyEvent(KeyEvent event) {
             if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
                 if (event.getAction() == KeyEvent.ACTION_UP &&
                         event.getRepeatCount() == 0) {
+                    markAction("LOOKUP_KEY_BACK");
                     handleLookupBack();
                 }
                 return true;
@@ -324,12 +334,13 @@ public class FloatingService extends Service {
                 case MotionEvent.ACTION_DOWN:
                     edgeDownX = event.getX();
                     edgeDownY = event.getY();
-                    trackingLeftBack = edgeDownX <= dp(28);
+                    trackingEdgeBack = isFromEdge(edgeDownX);
+                    edgeFromLeft = edgeDownX <= dp(34);
                     backConsumed = false;
                     break;
 
                 case MotionEvent.ACTION_MOVE:
-                    if (trackingLeftBack &&
+                    if (trackingEdgeBack &&
                             !backConsumed &&
                             isBackSwipe(event.getX(), event.getY())) {
                         backConsumed = true;
@@ -339,7 +350,7 @@ public class FloatingService extends Service {
 
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
-                    trackingLeftBack = false;
+                    trackingEdgeBack = false;
                     backConsumed = false;
                     break;
             }
@@ -347,7 +358,7 @@ public class FloatingService extends Service {
         }
 
         @Override public boolean onTouchEvent(MotionEvent event) {
-            if (trackingLeftBack && !backConsumed &&
+            if (trackingEdgeBack && !backConsumed &&
                     event.getActionMasked() == MotionEvent.ACTION_MOVE &&
                     isBackSwipe(event.getX(), event.getY())) {
                 backConsumed = true;
@@ -356,19 +367,20 @@ public class FloatingService extends Service {
             if (backConsumed &&
                     (event.getActionMasked() == MotionEvent.ACTION_UP ||
                      event.getActionMasked() == MotionEvent.ACTION_MOVE)) {
+                markAction("LOOKUP_EDGE_BACK");
                 handleLookupBack();
-                trackingLeftBack = false;
+                trackingEdgeBack = false;
                 backConsumed = false;
                 return true;
             }
 
             if (event.getActionMasked() == MotionEvent.ACTION_UP ||
                     event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
-                trackingLeftBack = false;
+                trackingEdgeBack = false;
                 backConsumed = false;
             }
 
-            return trackingLeftBack || backConsumed || super.onTouchEvent(event);
+            return trackingEdgeBack || backConsumed || super.onTouchEvent(event);
         }
     }
 
@@ -1261,6 +1273,8 @@ public class FloatingService extends Service {
         saveLookupHistory(q);
 
         LookupOverlayFrameLayout root = new LookupOverlayFrameLayout(this);
+        boolean fullscreen = LOOKUP_MODE_FULLSCREEN.equals(mode);
+        root.setBackgroundColor(fullscreen ? 0x66000000 : Color.TRANSPARENT);
 
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
@@ -1430,13 +1444,30 @@ public class FloatingService extends Service {
         panel.addView(footer, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(30)));
 
-        root.addView(panel, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT));
+        panel.setClickable(true);
+
+        if (fullscreen) {
+            FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT);
+            panelLp.leftMargin = dp(8);
+            panelLp.rightMargin = dp(8);
+            panelLp.topMargin = dp(8);
+            panelLp.bottomMargin = dp(56);
+            root.addView(panel, panelLp);
+
+            root.setOnClickListener(v -> {
+                markAction("LOOKUP_MASK_DISMISS");
+                closeLookupOverlay();
+            });
+        } else {
+            root.addView(panel, new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT));
+        }
 
         DisplayMetrics dm = getResources().getDisplayMetrics();
         SharedPreferences prefs = getSharedPreferences(LOOKUP_WINDOW_PREFS, MODE_PRIVATE);
-        boolean fullscreen = LOOKUP_MODE_FULLSCREEN.equals(mode);
 
         int minWidth = dp(250);
         int minHeight = dp(300);
@@ -1475,6 +1506,29 @@ public class FloatingService extends Service {
         try {
             wm.addView(root, lookupOverlayLp);
             root.requestFocus();
+
+            if (Build.VERSION.SDK_INT >= 33) {
+                root.post(() -> {
+                    try {
+                        android.window.OnBackInvokedDispatcher dispatcher =
+                                root.findOnBackInvokedDispatcher();
+                        if (dispatcher != null && lookupOverlay == root) {
+                            android.window.OnBackInvokedCallback callback = () -> {
+                                markAction("LOOKUP_SYSTEM_GESTURE_BACK");
+                                handleLookupBack();
+                            };
+                            dispatcher.registerOnBackInvokedCallback(
+                                    android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                                    callback);
+                            lookupBackDispatcher = dispatcher;
+                            lookupBackCallback = callback;
+                        }
+                    } catch (Throwable t) {
+                        recordHandledCrash("registerLookupBackCallback", t);
+                    }
+                });
+            }
+
             // Keep the original bubble mounted continuously. A proxy is added
             // above the result layer instead of removing/re-adding the bubble.
             ensureBubbleProxyOnTop();
@@ -1715,6 +1769,8 @@ public class FloatingService extends Service {
 
     private void saveLookupOverlayBounds() {
         if (lookupOverlayLp == null) return;
+        if (LOOKUP_MODE_FULLSCREEN.equals(lookupOverlayMode)) return;
+        if (lookupOverlayLp.width <= 0 || lookupOverlayLp.height <= 0) return;
 
         getSharedPreferences(LOOKUP_WINDOW_PREFS, MODE_PRIVATE)
                 .edit()
@@ -1793,6 +1849,16 @@ public class FloatingService extends Service {
 
     private void removeLookupOverlay(boolean clearRestoreState) {
         saveLookupOverlayBounds();
+
+        if (Build.VERSION.SDK_INT >= 33 &&
+                lookupBackDispatcher != null &&
+                lookupBackCallback != null) {
+            try {
+                lookupBackDispatcher.unregisterOnBackInvokedCallback(lookupBackCallback);
+            } catch (Throwable ignored) {}
+            lookupBackDispatcher = null;
+            lookupBackCallback = null;
+        }
 
         if (lookupOverlay != null && wm != null) {
             try {
