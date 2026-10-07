@@ -10,13 +10,11 @@ import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
 import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions;
+import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions;
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
 
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
 /**
- * Small OCR facade for Latin, Chinese and Japanese scripts.
+ * OCR-only facade for Latin, Chinese, Japanese and Korean scripts.
  * Recognition models are provided by Google Play services to keep APK size low.
  */
 final class MultilingualOcrRecognizer {
@@ -28,11 +26,9 @@ final class MultilingualOcrRecognizer {
     private enum Script {
         LATIN,
         CHINESE,
-        JAPANESE
+        JAPANESE,
+        KOREAN
     }
-
-    private static final Pattern LOOKUP_TOKEN =
-            Pattern.compile("[\\p{L}\\p{N}][\\p{L}\\p{N}'’._-]{0,39}");
 
     private MultilingualOcrRecognizer() {}
 
@@ -44,12 +40,15 @@ final class MultilingualOcrRecognizer {
                 new ChineseTextRecognizerOptions.Builder().build());
         TextRecognizer japanese = TextRecognition.getClient(
                 new JapaneseTextRecognizerOptions.Builder().build());
+        TextRecognizer korean = TextRecognition.getClient(
+                new KoreanTextRecognizerOptions.Builder().build());
 
         Task<Text> latinTask = latin.process(image);
         Task<Text> chineseTask = chinese.process(image);
         Task<Text> japaneseTask = japanese.process(image);
+        Task<Text> koreanTask = korean.process(image);
 
-        Tasks.whenAllComplete(latinTask, chineseTask, japaneseTask)
+        Tasks.whenAllComplete(latinTask, chineseTask, japaneseTask, koreanTask)
                 .addOnCompleteListener(ignored -> {
                     try {
                         String best = "";
@@ -82,13 +81,23 @@ final class MultilingualOcrRecognizer {
                             }
                         }
 
-                        String token = firstLookupToken(best);
-                        if (!token.isEmpty()) {
-                            callback.onSuccess(token);
+                        if (koreanTask.isSuccessful()) {
+                            String value = textOf(koreanTask);
+                            int score = score(value, Script.KOREAN);
+                            if (score > bestScore) {
+                                best = value;
+                                bestScore = score;
+                            }
+                        }
+
+                        // Pass the full recognized text verbatim. The Groq
+                        // prompt, not this OCR layer, determines its language.
+                        if (!best.trim().isEmpty()) {
+                            callback.onSuccess(best);
                             return;
                         }
 
-                        Exception error = firstError(latinTask, chineseTask, japaneseTask);
+                        Exception error = firstError(latinTask, chineseTask, japaneseTask, koreanTask);
                         callback.onFailure(error != null
                                 ? error
                                 : new IllegalStateException("没有识别到文字"));
@@ -96,6 +105,7 @@ final class MultilingualOcrRecognizer {
                         latin.close();
                         chinese.close();
                         japanese.close();
+                        korean.close();
                     }
                 });
     }
@@ -125,6 +135,8 @@ final class MultilingualOcrRecognizer {
                 score += script == Script.LATIN ? 5 : 1;
             } else if (isKana(c)) {
                 score += script == Script.JAPANESE ? 6 : 1;
+            } else if (isHangul(c)) {
+                score += script == Script.KOREAN ? 6 : 1;
             } else if (isHan(c)) {
                 score += script == Script.CHINESE ? 5
                         : script == Script.JAPANESE ? 4
@@ -148,20 +160,9 @@ final class MultilingualOcrRecognizer {
         return (c >= '\u3400' && c <= '\u9fff') || c == '々' || c == '〆';
     }
 
-    static String firstLookupToken(String raw) {
-        if (raw == null) return "";
-
-        String normalized = raw
-                .replace('\r', ' ')
-                .replace('\n', ' ')
-                .replaceAll("\\s+", " ")
-                .trim();
-
-        Matcher matcher = LOOKUP_TOKEN.matcher(normalized);
-        if (matcher.find()) return matcher.group();
-
-        return normalized.length() <= 40
-                ? normalized
-                : normalized.substring(0, 40);
+    private static boolean isHangul(char c) {
+        return (c >= '\u1100' && c <= '\u11ff')
+                || (c >= '\u3130' && c <= '\u318f')
+                || (c >= '\uac00' && c <= '\ud7af');
     }
 }
