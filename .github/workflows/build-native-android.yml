@@ -47,6 +47,14 @@ jobs:
           echo "VERSION_CODE=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
           echo "VERSION_NAME=0.4.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
 
+      - name: Guard vivo system-bar compatibility
+        shell: bash
+        run: |
+          if grep -R -n -E 'WindowInsetsController|getInsetsController\(' app/src/main/java; then
+            echo "::error::Unsupported WindowInsetsController path reintroduced; this crashes QuickLookupActivity on the target vivo/OriginOS device."
+            exit 1
+          fi
+
       - name: Detect release signing secrets
         shell: bash
         env:
