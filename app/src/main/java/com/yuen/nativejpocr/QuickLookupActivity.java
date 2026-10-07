@@ -11,7 +11,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
-import android.view.WindowInsetsController;
 import android.widget.*;
 
 import org.json.JSONArray;
@@ -203,15 +202,13 @@ public class QuickLookupActivity extends Activity {
         w.setStatusBarColor(0xffeaf7ff);
         w.setNavigationBarColor(Color.WHITE);
 
-        if (android.os.Build.VERSION.SDK_INT >= 30 && w.getInsetsController() != null) {
-            int light = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS |
-                    WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
-            w.getInsetsController().setSystemBarsAppearance(light, light);
-        } else {
-            w.getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR |
-                            (android.os.Build.VERSION.SDK_INT >= 26
-                                    ? View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR : 0));
+        View decor = w.getDecorView();
+        if (decor != null) {
+            int flags = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                flags |= View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+            }
+            decor.setSystemUiVisibility(flags);
         }
     }
 
