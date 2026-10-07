@@ -90,6 +90,8 @@ public class FloatingService extends Service {
     private boolean projectionRequestInFlight = false;
     private android.window.OnBackInvokedDispatcher searchBackDispatcher;
     private android.window.OnBackInvokedCallback searchBackCallback;
+    private android.window.OnBackInvokedDispatcher lookupEditBackDispatcher;
+    private android.window.OnBackInvokedCallback lookupEditBackCallback;
     private EditText lookupEditor;
     private View lookupHeaderNormal;
     private View lookupHeaderEdit;
@@ -1221,6 +1223,19 @@ public class FloatingService extends Service {
                 : LOOKUP_MODE_FLOAT;
     }
 
+    private void clearLookupEditBackCallback() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+                lookupEditBackDispatcher != null &&
+                lookupEditBackCallback != null) {
+            try {
+                lookupEditBackDispatcher.unregisterOnBackInvokedCallback(
+                        lookupEditBackCallback);
+            } catch (Throwable ignored) {}
+        }
+        lookupEditBackDispatcher = null;
+        lookupEditBackCallback = null;
+    }
+
     private void setLookupOverlayFocusable(boolean focusable) {
         if (lookupOverlay == null || lookupOverlayLp == null || wm == null) return;
 
@@ -1240,7 +1255,33 @@ public class FloatingService extends Service {
 
         if (focusable) {
             lookupOverlay.requestFocus();
+
+            if (Build.VERSION.SDK_INT >= 33) {
+                View owner = lookupOverlay;
+                owner.post(() -> {
+                    if (lookupOverlay != owner || lookupEditor == null) return;
+                    try {
+                        android.window.OnBackInvokedDispatcher dispatcher =
+                                owner.findOnBackInvokedDispatcher();
+                        if (dispatcher != null) {
+                            clearLookupEditBackCallback();
+                            android.window.OnBackInvokedCallback callback = () -> {
+                                markAction("LOOKUP_EDIT_SYSTEM_BACK");
+                                handleLookupBack();
+                            };
+                            dispatcher.registerOnBackInvokedCallback(
+                                    android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                                    callback);
+                            lookupEditBackDispatcher = dispatcher;
+                            lookupEditBackCallback = callback;
+                        }
+                    } catch (Throwable t) {
+                        recordHandledCrash("registerLookupEditBackCallback", t);
+                    }
+                });
+            }
         } else {
+            clearLookupEditBackCallback();
             lookupOverlay.clearFocus();
         }
     }
@@ -1990,6 +2031,7 @@ public class FloatingService extends Service {
 
     private void removeLookupOverlay(boolean clearRestoreState) {
         saveLookupOverlayBounds();
+        clearLookupEditBackCallback();
 
         if (lookupOverlay != null && wm != null) {
             try {
