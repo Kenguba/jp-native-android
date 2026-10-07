@@ -8,6 +8,7 @@ import android.content.IntentFilter;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.KeyEvent;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.Toast;
@@ -15,17 +16,19 @@ import android.widget.Toast;
 /**
  * Invisible Back host for external lookup links.
  *
- * The Activity never renders dictionary UI. It stays transparent behind the
- * WindowManager overlay so Android's real system Back / predictive Back gesture
- * has an Activity dispatcher to target. FloatingService owns all visible UI.
+ * Visible dictionary UI remains a WindowManager TYPE_APPLICATION_OVERLAY.
+ * This transparent Activity exists only so Android / OriginOS has a real
+ * application window to target for system Back gestures.
  */
 public final class LookupLinkActivity extends Activity {
     private android.window.OnBackInvokedCallback backCallback;
     private boolean finishReceiverRegistered;
+    private String currentMode = FloatingService.LOOKUP_MODE_FULLSCREEN;
 
     private final BroadcastReceiver finishReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             if (FloatingService.ACTION_LOOKUP_HOST_FINISH.equals(intent.getAction())) {
+                markHostAction("HOST_FINISH_BROADCAST");
                 finishBridge();
             }
         }
@@ -33,36 +36,47 @@ public final class LookupLinkActivity extends Activity {
 
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
-        suppressWindowTransition();
+        currentMode = extractMode(getIntent());
+        configureTransparentHost(currentMode);
         registerFinishReceiver();
-        registerSystemBack();
         forward(getIntent());
     }
 
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        suppressWindowTransition();
+        currentMode = extractMode(intent);
+        configureTransparentHost(currentMode);
         forward(intent);
     }
 
+    @Override protected void onPostResume() {
+        super.onPostResume();
+        // Register only after the Activity is truly resumed. Some OriginOS
+        // versions ignore predictive/system Back callbacks registered too early.
+        registerSystemBack();
+        markHostAction("HOST_RESUMED:" + currentMode);
+    }
+
     @Override public void onBackPressed() {
-        if (Build.VERSION.SDK_INT < 33) {
-            requestLookupBack();
-        } else {
-            // API 33+ uses OnBackInvokedDispatcher below.
-            requestLookupBack();
+        markHostAction("HOST_ON_BACK_PRESSED");
+        requestLookupBack();
+    }
+
+    @Override public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+            if (event.getAction() == KeyEvent.ACTION_UP &&
+                    event.getRepeatCount() == 0) {
+                markHostAction("HOST_KEY_BACK");
+                requestLookupBack();
+            }
+            return true;
         }
+        return super.dispatchKeyEvent(event);
     }
 
     @Override protected void onDestroy() {
-        if (Build.VERSION.SDK_INT >= 33 && backCallback != null) {
-            try {
-                getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
-            } catch (Throwable ignored) {}
-            backCallback = null;
-        }
-
+        clearSystemBack();
         if (finishReceiverRegistered) {
             try {
                 unregisterReceiver(finishReceiver);
@@ -72,15 +86,37 @@ public final class LookupLinkActivity extends Activity {
         super.onDestroy();
     }
 
+    private void clearSystemBack() {
+        if (Build.VERSION.SDK_INT >= 33 && backCallback != null) {
+            try {
+                getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
+            } catch (Throwable ignored) {}
+        }
+        backCallback = null;
+    }
+
     private void registerSystemBack() {
         if (Build.VERSION.SDK_INT < 33) return;
 
-        backCallback = this::requestLookupBack;
+        clearSystemBack();
+        backCallback = () -> {
+            markHostAction("HOST_ON_BACK_INVOKED");
+            requestLookupBack();
+        };
+
         try {
             getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
-                    android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                    android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY,
                     backCallback);
-        } catch (Throwable ignored) {}
+        } catch (Throwable first) {
+            // PRIORITY_OVERLAY is preferred on OEM gesture navigation; fall
+            // back to DEFAULT if the vendor implementation rejects it.
+            try {
+                getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                        android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                        backCallback);
+            } catch (Throwable ignored) {}
+        }
     }
 
     private void registerFinishReceiver() {
@@ -95,19 +131,32 @@ public final class LookupLinkActivity extends Activity {
         } catch (Throwable ignored) {}
     }
 
-    private void suppressWindowTransition() {
+    private void configureTransparentHost(String mode) {
         try {
             Window w = getWindow();
             w.setBackgroundDrawableResource(android.R.color.transparent);
             w.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-            // Let taps continue to be handled by the WindowManager overlay
-            // or the original app beneath it. This host only owns system Back.
-            w.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+            w.clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
+
+            if (FloatingService.LOOKUP_MODE_FULLSCREEN.equals(mode)) {
+                // Important for vivo/OriginOS: a FLAG_NOT_TOUCHABLE Activity
+                // can be skipped by the vendor edge-back target resolver.
+                // The real full-screen overlay sits above this host and still
+                // receives ordinary taps, so keeping the host touchable does
+                // not expose an extra visible page.
+                w.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+            } else {
+                // Small floating lookup must let taps outside the overlay
+                // continue through to the original application.
+                w.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+            }
+
             overridePendingTransition(0, 0);
         } catch (Throwable ignored) {}
     }
 
     private void requestLookupBack() {
+        markHostAction("HOST_SEND_LOOKUP_BACK");
         Intent back = new Intent(this, FloatingService.class)
                 .setAction(FloatingService.ACTION_LOOKUP_BACK);
         try {
@@ -119,6 +168,16 @@ public final class LookupLinkActivity extends Activity {
         } catch (Throwable ignored) {
             finishBridge();
         }
+    }
+
+    private void markHostAction(String action) {
+        try {
+            getSharedPreferences("crash_log", MODE_PRIVATE)
+                    .edit()
+                    .putString("last_lookup_host_action", action)
+                    .putLong("last_lookup_host_action_time", System.currentTimeMillis())
+                    .apply();
+        } catch (Throwable ignored) {}
     }
 
     private String extractQuery(Intent source) {
@@ -201,8 +260,7 @@ public final class LookupLinkActivity extends Activity {
             } else {
                 startService(show);
             }
-            // IMPORTANT: do not finish here. Staying alive, fully transparent
-            // and non-touchable is what makes system Back reliably target us.
+            markHostAction("HOST_FORWARD_LOOKUP:" + mode);
         } catch (Throwable t) {
             Toast.makeText(
                     this,
@@ -214,6 +272,7 @@ public final class LookupLinkActivity extends Activity {
 
     private void finishBridge() {
         try {
+            clearSystemBack();
             finish();
             overridePendingTransition(0, 0);
         } catch (Throwable ignored) {}
