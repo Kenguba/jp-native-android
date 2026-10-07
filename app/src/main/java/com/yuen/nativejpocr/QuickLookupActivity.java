@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.view.Gravity;
@@ -37,6 +38,7 @@ public class QuickLookupActivity extends Activity {
     private Button aiKeyButton;
     private String query;
     private boolean closing;
+    private boolean popupMode;
 
     private int dp(int v) {
         return Math.round(v * getResources().getDisplayMetrics().density);
@@ -58,6 +60,10 @@ public class QuickLookupActivity extends Activity {
     }
 
     @Override protected void onCreate(Bundle savedInstanceState) {
+        popupMode = getIntent() != null &&
+                getIntent().getBooleanExtra(FloatingService.EXTRA_POPUP_MODE, false);
+        if (popupMode) setTheme(R.style.Theme_JpQuickLookup_Popup);
+
         super.onCreate(savedInstanceState);
 
         String incoming = readQuery(getIntent());
@@ -69,7 +75,11 @@ public class QuickLookupActivity extends Activity {
 
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
-        panel.setBackgroundColor(Color.WHITE);
+        if (popupMode) {
+            panel.setBackground(rounded(Color.WHITE, 18));
+        } else {
+            panel.setBackgroundColor(Color.WHITE);
+        }
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
@@ -81,10 +91,13 @@ public class QuickLookupActivity extends Activity {
         title.setEllipsize(android.text.TextUtils.TruncateAt.END);
         header.addView(title, new LinearLayout.LayoutParams(0, dp(62), 1));
 
-        String[] headerIcons = {"☆", "◉", "☷", "✚"};
+        String[] headerIcons = popupMode
+                ? new String[]{"×"}
+                : new String[]{"☆", "◉", "☷", "✚"};
         for (String icon : headerIcons) {
-            TextView iv = text(icon, 29, 0xff202124);
+            TextView iv = text(icon, popupMode ? 32 : 29, 0xff202124);
             iv.setGravity(Gravity.CENTER);
+            if (popupMode) iv.setOnClickListener(v -> closeLookupTask());
             header.addView(iv, new LinearLayout.LayoutParams(dp(54), dp(54)));
         }
         panel.addView(header, new LinearLayout.LayoutParams(-1, dp(76)));
@@ -262,6 +275,23 @@ public class QuickLookupActivity extends Activity {
 
     private void configureWindow() {
         Window w = getWindow();
+
+        if (popupMode) {
+            w.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+            w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+
+            android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+            WindowManager.LayoutParams lp = w.getAttributes();
+            lp.width = Math.min(dm.widthPixels - dp(24), dp(540));
+            lp.height = Math.max(dp(360), Math.round(dm.heightPixels * 0.78f));
+            lp.gravity = Gravity.CENTER;
+            lp.dimAmount = 0.35f;
+            w.setAttributes(lp);
+
+            setFinishOnTouchOutside(true);
+            return;
+        }
+
         w.setStatusBarColor(0xffeaf7ff);
         w.setNavigationBarColor(Color.WHITE);
     }
