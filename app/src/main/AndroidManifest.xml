@@ -39,6 +39,8 @@
             android:exported="true"
             android:excludeFromRecents="true"
             android:noHistory="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="com.yuen.nativejpocr.lookup"
             android:theme="@style/Theme.JpQuickLookup"
             android:label="快速查词">
             <intent-filter>
