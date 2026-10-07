@@ -172,6 +172,7 @@ public class MainActivity extends Activity {
                 .remove("last_action_time")
                 .remove("last_handled")
                 .putInt("diagnostic_build_code",BuildConfig.VERSION_CODE)
+                .putLong("diagnostic_build_start",System.currentTimeMillis())
                 .commit();
     }
 
@@ -183,9 +184,21 @@ public class MainActivity extends Activity {
             java.util.List<android.app.ApplicationExitInfo> list=
                     am.getHistoricalProcessExitReasons(getPackageName(),0,5);
 
-            if(list==null || list.isEmpty()) return "没有历史退出记录";
+            if(list==null || list.isEmpty()) return "";
 
-            android.app.ApplicationExitInfo e=list.get(0);
+            long buildStart=getSharedPreferences("crash_log",MODE_PRIVATE)
+                    .getLong("diagnostic_build_start",0L);
+
+            android.app.ApplicationExitInfo e=null;
+            for(android.app.ApplicationExitInfo candidate:list){
+                if(candidate.getTimestamp()>=buildStart){
+                    e=candidate;
+                    break;
+                }
+            }
+
+            if(e==null) return "";
+
             return "reason="+exitReasonName(e.getReason())
                     +" ("+e.getReason()+")"
                     +"\nstatus="+e.getStatus()
