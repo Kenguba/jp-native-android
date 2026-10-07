@@ -5,9 +5,28 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      stage:
+        description: Release stage
+        required: true
+        default: B
+        type: choice
+        options:
+          - A
+          - D
+          - B
+          - T
+          - C
+          - R
+          - P
+          - H
 
 permissions:
   contents: write
+
+concurrency:
+  group: jp-native-android-versioned-build
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -55,8 +74,30 @@ jobs:
       - name: Set build version
         shell: bash
         run: |
+          VERSION_DATE=$(TZ=Asia/Shanghai date +'%y.%m.%d')
+          STAGE="${{ github.event.inputs.stage || 'B' }}"
+          case "$STAGE" in
+            A|D|B|T|C|R|P|H) ;;
+            *) echo "::error::Invalid release stage: $STAGE"; exit 1 ;;
+          esac
+
+          MAX_SEQ=0
+          while IFS= read -r ref; do
+            tag=${ref#refs/tags/}
+            tag=${tag%\^\{\}}
+            if [[ "$tag" =~ ^${VERSION_DATE}-([0-9]{5})[ADBTCRPH]$ ]]; then
+              seq=$((10#${BASH_REMATCH[1]}))
+              if (( seq > MAX_SEQ )); then MAX_SEQ=$seq; fi
+            fi
+          done < <(git ls-remote --tags origin | awk '{print $2}')
+
+          NEXT_SEQ=$((MAX_SEQ + 1))
+          printf -v SEQ '%05d' "$NEXT_SEQ"
+          VERSION_NAME="${VERSION_DATE}-${SEQ}${STAGE}"
+
           echo "VERSION_CODE=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
-          echo "VERSION_NAME=0.4.$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+          echo "Build version: $VERSION_NAME (versionCode=$GITHUB_RUN_NUMBER)"
 
       - name: Guard vivo system-bar compatibility
         shell: bash
@@ -112,18 +153,18 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/arm/release/app-arm-release.apk dist/jp-native-android-arm.apk
-          cp app/build/outputs/apk/arm64/release/app-arm64-release.apk dist/jp-native-android-arm64-v8a.apk
-          cp app/build/outputs/apk/armv7/release/app-armv7-release.apk dist/jp-native-android-armeabi-v7a.apk
+          cp app/build/outputs/apk/arm/release/app-arm-release.apk "dist/jp-native-android-${VERSION_NAME}-arm.apk"
+          cp app/build/outputs/apk/arm64/release/app-arm64-release.apk "dist/jp-native-android-${VERSION_NAME}-arm64-v8a.apk"
+          cp app/build/outputs/apk/armv7/release/app-armv7-release.apk "dist/jp-native-android-${VERSION_NAME}-armeabi-v7a.apk"
 
       - name: Prepare fallback debug APK files
         if: env.HAS_SIGNING != 'true'
         shell: bash
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/arm/debug/app-arm-debug.apk dist/jp-native-android-arm-UNSIGNED-DEBUG.apk
-          cp app/build/outputs/apk/arm64/debug/app-arm64-debug.apk dist/jp-native-android-arm64-v8a-UNSIGNED-DEBUG.apk
-          cp app/build/outputs/apk/armv7/debug/app-armv7-debug.apk dist/jp-native-android-armeabi-v7a-UNSIGNED-DEBUG.apk
+          cp app/build/outputs/apk/arm/debug/app-arm-debug.apk "dist/jp-native-android-${VERSION_NAME}-arm-UNSIGNED-DEBUG.apk"
+          cp app/build/outputs/apk/arm64/debug/app-arm64-debug.apk "dist/jp-native-android-${VERSION_NAME}-arm64-v8a-UNSIGNED-DEBUG.apk"
+          cp app/build/outputs/apk/armv7/debug/app-armv7-debug.apk "dist/jp-native-android-${VERSION_NAME}-armeabi-v7a-UNSIGNED-DEBUG.apk"
 
       - name: Enforce APK size budget
         shell: bash
@@ -204,9 +245,9 @@ jobs:
 
           ## 下载哪个 APK
 
-          - **jp-native-android-arm64-v8a.apk**：只包含 `arm64-v8a`，推荐现在绝大多数 Android 手机使用。
-          - **jp-native-android-armeabi-v7a.apk**：只包含 `armeabi-v7a`，适合老旧 32 位 ARM 手机和平板。
-          - **jp-native-android-arm.apk**：包含 `arm64-v8a + armeabi-v7a`，手机通用集合版。
+          - **jp-native-android-<版本>-arm64-v8a.apk**：只包含 `arm64-v8a`，推荐现在绝大多数 Android 手机使用。
+          - **jp-native-android-<版本>-armeabi-v7a.apk**：只包含 `armeabi-v7a`，适合老旧 32 位 ARM 手机和平板。
+          - **jp-native-android-<版本>-arm.apk**：包含 `arm64-v8a + armeabi-v7a`，手机通用集合版。
 
           为遵守单 APK 不超过 30 MB 的硬限制，当前不发布 universal APK。x86 / x86_64 如需支持，应改为分架构产物，不能通过超大 universal APK 绕过体积限制。
 
@@ -222,26 +263,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          TAG="build-${GITHUB_RUN_NUMBER}"
+          TAG="$VERSION_NAME"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" \
-              dist/jp-native-android-arm64-v8a.apk \
-              dist/jp-native-android-armeabi-v7a.apk \
-              dist/jp-native-android-arm.apk \
+              dist/*.apk \
               dist/SHA256SUMS.txt \
               --clobber
 
             gh release edit "$TAG" \
-              --title "JP Native Android $VERSION_NAME ($TAG)" \
+              --title "JP Native Android $VERSION_NAME" \
               --notes-file release-notes.md
           else
             gh release create "$TAG" \
-              dist/jp-native-android-arm64-v8a.apk \
-              dist/jp-native-android-armeabi-v7a.apk \
-              dist/jp-native-android-arm.apk \
+              dist/*.apk \
               dist/SHA256SUMS.txt \
               --target "$GITHUB_SHA" \
-              --title "JP Native Android $VERSION_NAME ($TAG)" \
+              --title "JP Native Android $VERSION_NAME" \
               --notes-file release-notes.md
           fi
