@@ -55,19 +55,6 @@ jobs:
             exit 1
           fi
 
-      - name: Detect Groq AI secret
-        shell: bash
-        env:
-          GROQ_KEY: ${{ secrets.GROQ_API_KEY }}
-        run: |
-          if [[ -n "$GROQ_KEY" ]]; then
-            echo "HAS_GROQ=true" >> "$GITHUB_ENV"
-            echo "Groq AI: configured"
-          else
-            echo "HAS_GROQ=false" >> "$GITHUB_ENV"
-            echo "::warning::Groq AI is NOT configured in this GitHub build. Add repository secret GROQ_API_KEY."
-          fi
-
       - name: Detect release signing secrets
         shell: bash
         env:
@@ -92,7 +79,6 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           gradle --no-daemon \
             :app:assembleUniversalRelease \
