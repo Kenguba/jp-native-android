@@ -30,6 +30,7 @@ public class FloatingService extends Service {
     public static final String ACTION_SHOW_SEARCH = "com.yuen.nativejpocr.SHOW_FLOATING_SEARCH";
     public static final String EXTRA_SEARCH_QUERY = "floating_search_query";
     public static final String EXTRA_RETURN_TO_SEARCH = "return_to_floating_search";
+    public static final String EXTRA_POPUP_MODE = "quick_lookup_popup";
 
     private WindowManager wm;
     private View bubble;
@@ -96,11 +97,14 @@ public class FloatingService extends Service {
             }
 
             if (text == null || text.trim().isEmpty()) {
-                showResultCard("没有识别到文字", "把取词框对准日语单词后再松手。");
+                showResultCard("没有识别到文字", "把取词框对准要识别的文字后再松手。");
                 return;
             }
 
-            openQuickLookup(text.trim());
+            // Drag OCR is a direct lookup action. Never route it through the
+            // desktop global-search layer; show the lookup itself as a popup.
+            removeSearchPanel();
+            openOcrLookupPopup(text.trim());
         }
     };
 
@@ -123,8 +127,8 @@ public class FloatingService extends Service {
     private void createChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
             NotificationChannel c = new NotificationChannel(
-                    CH, "日语浮动取词", NotificationManager.IMPORTANCE_LOW);
-            c.setDescription("保持桌面可拖拽的日语取词浮标");
+                    CH, "多语种浮动取词", NotificationManager.IMPORTANCE_LOW);
+            c.setDescription("保持桌面可拖拽的中英日 OCR 取词浮标");
             ((NotificationManager)getSystemService(NOTIFICATION_SERVICE))
                     .createNotificationChannel(c);
         }
@@ -139,7 +143,7 @@ public class FloatingService extends Service {
 
         return new Notification.Builder(this, CH)
                 .setSmallIcon(android.R.drawable.ic_menu_search)
-                .setContentTitle("日语浮动取词已开启")
+                .setContentTitle("多语种浮动取词已开启")
                 .setContentText("轻点搜索；拖动并松手可 OCR 取词")
                 .setContentIntent(p)
                 .setOngoing(true)
@@ -864,23 +868,36 @@ public class FloatingService extends Service {
     }
 
     private void openQuickLookup(String q) {
-        markAction("OPEN_QUICK_LOOKUP:" + q);
-        String returnQuery = currentSearchQuery == null || currentSearchQuery.trim().isEmpty()
-                ? q
-                : currentSearchQuery.trim();
+        openQuickLookup(q, true, false);
+    }
+
+    private void openOcrLookupPopup(String q) {
+        openQuickLookup(q, false, true);
+    }
+
+    private void openQuickLookup(String q, boolean returnToSearch, boolean popupMode) {
+        markAction((popupMode ? "OPEN_OCR_POPUP:" : "OPEN_QUICK_LOOKUP:") + q);
+
         Intent i = new Intent(this, QuickLookupActivity.class)
                 .putExtra("query", q)
-                .putExtra(EXTRA_RETURN_TO_SEARCH, true)
-                .putExtra(EXTRA_SEARCH_QUERY, returnQuery)
+                .putExtra(EXTRA_RETURN_TO_SEARCH, returnToSearch)
+                .putExtra(EXTRA_POPUP_MODE, popupMode)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
                         | Intent.FLAG_ACTIVITY_CLEAR_TOP
                         | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+
+        if (returnToSearch) {
+            String returnQuery = currentSearchQuery == null || currentSearchQuery.trim().isEmpty()
+                    ? q
+                    : currentSearchQuery.trim();
+            i.putExtra(EXTRA_SEARCH_QUERY, returnQuery);
+        }
 
         try {
             startActivity(i);
         } catch (Throwable e) {
             recordHandledCrash("openQuickLookup", e);
-            safeToast("查词页异常：" + e.getClass().getSimpleName()
+            safeToast("查词弹窗异常：" + e.getClass().getSimpleName()
                     + (e.getMessage() == null ? "" : " · " + e.getMessage()));
         }
     }
