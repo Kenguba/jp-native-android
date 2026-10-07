@@ -124,16 +124,13 @@ public final class SearchOverlayActivity extends Activity {
         w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
                 WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
 
-        if (Build.VERSION.SDK_INT >= 30 && w.getInsetsController() != null) {
-            w.getInsetsController().setSystemBarsAppearance(
-                    0,
-                    WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS |
-                            WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
-        } else {
-            View decor = w.getDecorView();
+        View decor = w.getDecorView();
+        if (decor != null) {
             int vis = decor.getSystemUiVisibility();
             vis &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
-            if (Build.VERSION.SDK_INT >= 26) vis &= ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+            if (Build.VERSION.SDK_INT >= 26) {
+                vis &= ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+            }
             decor.setSystemUiVisibility(vis);
         }
     }
