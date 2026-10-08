@@ -47,6 +47,7 @@ public class FloatingService extends Service {
     public static final String EXTRA_LOOKUP_QUERY = "lookup_query";
     public static final String EXTRA_LOOKUP_MODE = "lookup_mode";
     public static final String EXTRA_RETURN_TO_SEARCH = "return_to_floating_search";
+    public static final String EXTRA_PRIVATE_LOOKUP = "private_lookup";
     public static final String EXTRA_POPUP_MODE = "quick_lookup_popup";
     public static final String LOOKUP_MODE_FLOAT = "float";
     public static final String LOOKUP_MODE_FULLSCREEN = "fullscreen";
@@ -65,7 +66,10 @@ public class FloatingService extends Service {
 
     private View searchPanel;
     private WindowManager.LayoutParams searchPanelLp;
+    private GrokSearchView grokSearchView;
     private boolean searchPanelHosted;
+    private boolean privateSearchMode;
+    private boolean privateLookup;
     private View resultCard;
     private View lookupOverlay;
     private WindowManager.LayoutParams lookupOverlayLp;
@@ -301,7 +305,7 @@ public class FloatingService extends Service {
             if (trackingEdge && backRecognized &&
                     e.getActionMasked() == MotionEvent.ACTION_UP) {
                 markAction("SEARCH_EDGE_BACK");
-                removeSearchPanel();
+                if (!handleSearchLayerBack()) removeSearchPanel();
                 trackingEdge = false;
                 backRecognized = false;
                 return true;
@@ -729,204 +733,135 @@ public class FloatingService extends Service {
         }
     }
 
+    private boolean handleSearchLayerBack() {
+        return grokSearchView != null && grokSearchView.handleBack();
+    }
+
     private void showSearchPanel() {
         if (!Settings.canDrawOverlays(this) || wm == null) return;
-
         removeResultCard();
 
         BackGestureFrameLayout root = new BackGestureFrameLayout(this);
-        root.setBackgroundColor(Color.TRANSPARENT);
-        View mask = new View(this);
-        mask.setBackgroundColor(searchPanelHosted ? Color.TRANSPARENT : 0x6b000000);
-        mask.setContentDescription("点击关闭搜索浮窗");
-        mask.setOnClickListener(v -> removeSearchPanel());
-        root.addView(mask, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        root.setBackgroundColor(0xfffcfcfc);
         root.setFocusableInTouchMode(true);
         root.setOnKeyListener((v, keyCode, event) -> {
-            if (keyCode == KeyEvent.KEYCODE_BACK &&
-                    event.getAction() == KeyEvent.ACTION_UP) {
+            if (keyCode == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP) {
                 markAction("SEARCH_KEY_BACK");
-                removeSearchPanel();
+                if (!handleSearchLayerBack()) removeSearchPanel();
                 return true;
             }
             return false;
         });
 
-        LinearLayout content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
+        GrokSearchView ui = new GrokSearchView(this, currentSearchQuery, privateSearchMode,
+                recentHistory(), new GrokSearchView.Actions() {
+            @Override public void onSearch(String query) {
+                currentSearchQuery = query;
+                removeSearchPanel(false);
+                openQuickLookup(query);
+            }
+            @Override public void onSettings() {
+                removeSearchPanel();
+                Intent intent = new Intent(FloatingService.this, MainActivity.class)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(intent);
+            }
+            @Override public void onClose() { removeSearchPanel(); }
+            @Override public void onUnavailable(String message) { safeToast(message); }
+            @Override public void onPrivateModeChanged(boolean enabled) { privateSearchMode = enabled; }
+        });
+        grokSearchView = ui;
+        root.addView(ui, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-        FrameLayout.LayoutParams contentLp = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT);
-        contentLp.leftMargin = dp(15);
-        contentLp.rightMargin = dp(15);
-        contentLp.topMargin = dp(6);
-        root.addView(content, contentLp);
-
-        LinearLayout bar = new LinearLayout(this);
-        bar.setOrientation(LinearLayout.HORIZONTAL);
-        bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setPadding(dp(14), 0, dp(4), 0);
-        bar.setBackground(outline(0xff079bff, 1, 0xf218191d, 10));
-        bar.setElevation(dp(4));
-
-        EditText input = new SearchEditor(this);
-        input.setSingleLine(true);
-        input.setTextColor(0xfff4f5f7);
-        input.setHintTextColor(0xff969ca6);
-        input.setHint("请输入需要查找的内容");
-        input.setTextSize(18);
-        input.setBackgroundColor(Color.TRANSPARENT);
-        input.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
-        input.setSelectAllOnFocus(false);
-        input.setPadding(0, 0, dp(8), 0);
-
-        TextView clear = new TextView(this);
-        clear.setText("×");
-        clear.setTextColor(0xff079bff);
-        clear.setTextSize(31);
-        clear.setGravity(Gravity.CENTER);
-        clear.setPadding(0, 0, 0, dp(2));
-
-        bar.addView(input, new LinearLayout.LayoutParams(0, dp(44), 1));
-        bar.addView(clear, new LinearLayout.LayoutParams(dp(42), dp(44)));
-
-        content.addView(bar, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(44)));
-
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(false);
-        scroll.setBackground(bg(0xe6101820, 10));
-        scroll.setVerticalScrollBarEnabled(false);
-        scroll.setClipToPadding(false);
-
-        LinearLayout suggestions = new LinearLayout(this);
-        suggestions.setOrientation(LinearLayout.VERTICAL);
-        suggestions.setPadding(0, dp(8), 0, dp(56));
-        scroll.addView(suggestions, new ScrollView.LayoutParams(
-                ScrollView.LayoutParams.MATCH_PARENT,
-                ScrollView.LayoutParams.WRAP_CONTENT));
-
-        LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        scrollLp.topMargin = dp(2);
-        content.addView(scroll, scrollLp);
-
-        // The transparent host dims system bars; this window owns search UI
-        // and mask touches throughout the display, including its bottom edge.
         int flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL |
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN |
                 (searchPanelHosted ? WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE : 0);
-
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
-                overlayType(),
-                flags,
+                WindowManager.LayoutParams.MATCH_PARENT, overlayType(), flags,
                 PixelFormat.TRANSLUCENT);
         lp.gravity = Gravity.TOP | Gravity.START;
         if (Build.VERSION.SDK_INT >= 30) {
-            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+            lp.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
             lp.setFitInsetsTypes(0);
         } else if (Build.VERSION.SDK_INT >= 28) {
-            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            lp.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
         }
-        lp.softInputMode =
-                WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
+        lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
                 WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN;
-
         searchPanel = root;
         searchPanelLp = lp;
+
         root.setOnApplyWindowInsetsListener((view, insets) -> {
-            root.setPadding(0, insets.getSystemWindowInsetTop(), 0, insets.getSystemWindowInsetBottom());
+            int top = insets.getSystemWindowInsetTop();
+            int bottom = insets.getSystemWindowInsetBottom();
+            boolean keyboard = false;
+            if (Build.VERSION.SDK_INT >= 30) {
+                top = insets.getInsetsIgnoringVisibility(
+                        WindowInsets.Type.statusBars() | WindowInsets.Type.displayCutout()).top;
+                int nav = insets.getInsetsIgnoringVisibility(
+                        WindowInsets.Type.navigationBars()).bottom;
+                int ime = insets.getInsets(WindowInsets.Type.ime()).bottom;
+                keyboard = ime > nav + dp(80);
+                bottom = Math.max(nav, ime);
+                // Some OEM overlay windows already resize when the keyboard is
+                // shown. Do not count the IME height twice on those devices.
+                int screenH = getResources().getDisplayMetrics().heightPixels;
+                if (root.getHeight() > 0 && root.getHeight() < screenH - dp(100)) {
+                    bottom = nav;
+                    keyboard = true;
+                }
+            }
+            root.setPadding(0, top, 0, bottom);
+            ui.setKeyboardVisible(keyboard);
             return insets;
         });
-        markAction("SHOW_SEARCH_PANEL_ADD_VIEW");
-        try {
-            wm.addView(searchPanel, lp);
-        } catch (Throwable firstError) {
-            searchPanel = null;
-            showResultCard(
-                    "搜索悬浮层打开失败",
-                    firstError.getClass().getSimpleName() + ": "
-                            + (firstError.getMessage() == null ? "未知窗口错误" : firstError.getMessage()));
-            return;
-        }
 
-        if (!searchPanelHosted) registerSearchBackCallback();
-
-        markAction("SHOW_SEARCH_PANEL_UPDATE_SUGGESTIONS");
-        String initialQuery = currentSearchQuery == null ? "" : currentSearchQuery;
-        if (!initialQuery.isEmpty()) {
-            input.setText(initialQuery);
-            input.setSelection(input.length());
-        }
-        updateSuggestions(suggestions, initialQuery);
-
+        EditText input = ui.getInput();
         input.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
-
             @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
                 currentSearchQuery = s == null ? "" : s.toString();
-                updateSuggestions(suggestions, currentSearchQuery);
             }
-
             @Override public void afterTextChanged(Editable s) {}
         });
-
-        input.setOnEditorActionListener((v, actionId, event) -> {
-            if (actionId == EditorInfo.IME_ACTION_SEARCH ||
-                    (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER)) {
-                String q = input.getText().toString().trim();
-                if (!q.isEmpty()) {
-                    removeSearchPanel(false);
-                    openQuickLookup(q);
-                }
-                return true;
-            }
-            return false;
-        });
-
         input.setOnTouchListener((v, event) -> {
-            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN &&
+                    searchPanel == root && searchPanelLp != null) {
                 searchPanelLp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
-                searchPanelLp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
+                searchPanelLp.softInputMode =
+                        WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE |
                         WindowManager.LayoutParams.SOFT_INPUT_STATE_UNSPECIFIED;
-                wm.updateViewLayout(root, searchPanelLp);
-                registerSearchBackCallback();
+                try { wm.updateViewLayout(root, searchPanelLp); }
+                catch (Throwable t) { recordHandledCrash("searchFocus", t); }
+                if (!searchPanelHosted) registerSearchBackCallback();
             } else if (event.getActionMasked() == MotionEvent.ACTION_UP) {
                 input.requestFocus();
                 input.post(() -> {
                     if (searchPanel != root) return;
                     InputMethodManager imm =
                             (InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
-                    imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
+                    if (imm != null) imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
                 });
             }
             return false;
         });
-
-        input.setOnKeyListener((v, keyCode, event) -> {
-            if (keyCode == KeyEvent.KEYCODE_BACK &&
-                    event.getAction() == KeyEvent.ACTION_UP) {
-                markAction("SEARCH_INPUT_BACK");
-                removeSearchPanel();
-                return true;
-            }
-            return false;
-        });
-
-        clear.setOnClickListener(v -> {
-            if (input.length() > 0) {
-                input.setText("");
-                input.requestFocus();
-            } else {
-                removeSearchPanel();
-            }
-        });
-
-        markAction("SHOW_SEARCH_PANEL_FINISH");
+        markAction("SHOW_GROK_SEARCH_ADD_VIEW");
+        try {
+            wm.addView(root, lp);
+        } catch (Throwable failure) {
+            searchPanel = null;
+            searchPanelLp = null;
+            grokSearchView = null;
+            recordHandledCrash("showGrokSearchPanel.addView", failure);
+            showResultCard("搜索浮层打开失败",
+                    failure.getClass().getSimpleName() + ": " + failure.getMessage());
+            return;
+        }
+        if (!searchPanelHosted) registerSearchBackCallback();
         root.requestFocus();
         bringBubbleToFront();
     }
@@ -1254,6 +1189,7 @@ public class FloatingService extends Service {
                 .putExtra(EXTRA_LOOKUP_QUERY, value)
                 .putExtra(EXTRA_LOOKUP_MODE, mode)
                 .putExtra(EXTRA_RETURN_TO_SEARCH, returnToSearch)
+                .putExtra(EXTRA_PRIVATE_LOOKUP, returnToSearch && privateSearchMode)
                 .putExtra(EXTRA_SEARCH_QUERY, currentSearchQuery);
         try {
             startActivity(host);
@@ -1436,7 +1372,7 @@ public class FloatingService extends Service {
         lookupOverlayQuery = q;
         lookupOverlayMode = mode;
         lookupOverlayReturnToSearch = returnToSearch;
-        saveLookupHistory(q);
+        if (!privateLookup) saveLookupHistory(q);
 
         LookupOverlayFrameLayout root = new LookupOverlayFrameLayout(this);
         boolean fullscreen = lookupOverlayHosted || LOOKUP_MODE_FULLSCREEN.equals(mode);
@@ -2103,7 +2039,7 @@ public class FloatingService extends Service {
                 clearSearchBackCallback();
                 android.window.OnBackInvokedCallback callback = () -> {
                     markAction("SEARCH_SYSTEM_GESTURE_BACK");
-                    removeSearchPanel();
+                    if (!handleSearchLayerBack()) removeSearchPanel();
                 };
                 dispatcher.registerOnBackInvokedCallback(
                         android.window.OnBackInvokedDispatcher.PRIORITY_OVERLAY, callback);
@@ -2147,6 +2083,7 @@ public class FloatingService extends Service {
             searchPanel = null;
         }
         searchPanelLp = null;
+        grokSearchView = null;
         searchPanelHosted = false;
         if (finishHost && hosted) notifyLookupHostFinish();
         removeBubbleProxyIfUnused();
@@ -2179,6 +2116,7 @@ public class FloatingService extends Service {
         }
 
         if (intent != null && ACTION_SHOW_LOOKUP_OVERLAY.equals(intent.getAction())) {
+            privateLookup = intent.getBooleanExtra(EXTRA_PRIVATE_LOOKUP, false);
             String q = normalizeLookupQuery(intent.getStringExtra(EXTRA_LOOKUP_QUERY));
             String mode = normalizeLookupMode(intent.getStringExtra(EXTRA_LOOKUP_MODE));
             boolean returnToSearch =
@@ -2213,7 +2151,7 @@ public class FloatingService extends Service {
             if (lookupOverlay != null) {
                 handleLookupBack();
             } else if (searchPanel != null) {
-                removeSearchPanel();
+                if (!handleSearchLayerBack()) removeSearchPanel();
             } else {
                 notifyLookupHostFinish();
             }
