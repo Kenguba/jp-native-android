@@ -257,8 +257,20 @@ public class MainActivity extends Activity {
         void route(Intent i){
             String q=readIncoming(i);
             if(q!=null && !q.trim().isEmpty()){
-                startActivity(new Intent(this,QuickLookupActivity.class)
-                        .putExtra("query",q.trim()));
+                String value = q.trim();
+                if(Settings.canDrawOverlays(this)){
+                    Intent lookup = new Intent(this,FloatingService.class)
+                            .setAction(FloatingService.ACTION_SHOW_LOOKUP_OVERLAY)
+                            .putExtra(FloatingService.EXTRA_LOOKUP_QUERY,value)
+                            .putExtra(FloatingService.EXTRA_LOOKUP_MODE,
+                                    FloatingService.LOOKUP_MODE_FLOAT)
+                            .putExtra(FloatingService.EXTRA_RETURN_TO_SEARCH,false);
+                    if(Build.VERSION.SDK_INT>=26) startForegroundService(lookup);
+                    else startService(lookup);
+                }else{
+                    startActivity(new Intent(this,QuickLookupActivity.class)
+                            .putExtra("query",value));
+                }
                 finish();
                 return;
             }

@@ -234,12 +234,13 @@ APK 文件名固定格式：
 - 桌面搜索 Widget
 - 交互固定：轻点悬浮球进入桌面全局搜索；拖拽悬浮球进行区域 OCR，识别成功后必须直接打开查词弹窗，不得先进入或回落到桌面全局搜索层
 - 全局悬浮搜索应保留当前桌面或应用的系统状态栏，不重新绘制或侵占系统状态栏；OCR 查词结果必须通过显式 Intent 触发 `FloatingService.ACTION_SHOW_LOOKUP_OVERLAY`，由 `WindowManager.TYPE_APPLICATION_OVERLAY` 直接显示在当前桌面或前台 App 上方，禁止为了 OCR 查词启动 `QuickLookupActivity`、切换 Activity 或切换任务栈
-- OCR 查词 WindowManager 浮层以用户提供的欧路词典参考图/视频为 UI 基准：紧凑白色圆角卡片、词头 + 四个黑色描边操作图标、独立发音行、40dp 左右的浅灰词典分区头、白色内容区和无额外装饰的底部版权栏；禁止使用 Unicode 字符冒充主要工具栏图标。参考视频中的灰色圆点属于触摸指示器，不得做成可见抓手。顶部标题区可拖动窗口；底部版权栏整条区域作为隐形缩放热区，横向拖动改变宽度、纵向拖动改变高度，左上角保持锚定，并持久化窗口 x/y/宽/高
+- 有悬浮窗权限时，悬浮搜索选词、`PROCESS_TEXT` / `SEND` 查词与 Deep Link `mode=float` 必须复用 `FloatingService.ACTION_SHOW_LOOKUP_OVERLAY` 的同一查词卡片构建逻辑；入口差异只影响返回去向，不能维护多份小窗布局。`mode=fullscreen` 复用相同卡片，只改变窗口尺寸和全屏 Mask。没有悬浮窗权限时，PROCESS_TEXT / SEND 可回退到独立 Activity
+- OCR 查词 WindowManager 浮层以用户提供的视频1词典页为 UI 基准：紧凑白色圆角卡片、词头 + 收藏图标、独立发音行、40dp 左右的浅灰词典分区头、白色词条内容区、底部工具栏和版权栏；工具图标使用黑色描边资源，禁止使用 Unicode 字符冒充主要工具栏图标。参考视频中的灰色圆点属于触摸指示器，不得做成可见抓手。顶部标题区可拖动窗口；底部版权栏整条区域作为隐形缩放热区，横向拖动改变宽度、纵向拖动改变高度，左上角保持锚定，并持久化窗口 x/y/宽/高
 - Intent 查词浮层必须自己消费左侧返回手势和系统/实体返回键，不能让返回事件直接穿透到底层 App；浮层维护查询路由栈，有上一条查询时先返回上一条，路由栈为空时才关闭浮层。蓝色悬浮球必须始终位于查词浮层的最上层
 - 对外查询 Deep Link 固定为 `jp-native://lookup?q=<URL编码后的查询内容>`；由无界面的 `LookupLinkActivity` 接收后转发到 `FloatingService.ACTION_SHOW_LOOKUP_OVERLAY`，Deep Link 本身不得渲染或切换到查词 Activity 页面
 - Deep Link 支持 `mode=fullscreen`（外部 Intent 默认）与 `mode=float`（必须显式指定）；fullscreen 仍然必须是 `TYPE_APPLICATION_OVERLAY` 覆盖层，不允许打开查词 Activity。Deep Link 中转 Activity 必须透明、无预览、无动画、空 taskAffinity，并立即 finish，视觉上保持调用方页面不变
-- `mode=fullscreen` 的 WindowManager 根层必须覆盖整个可用屏幕，并在词典白色卡片下方绘制黑色半透明 Mask；点击卡片外 Mask 必须立即关闭本次 Intent 浮层。系统返回键、Android 13+ 系统返回手势、左右边缘返回手势统一调用同一个 `handleLookupBack()`：有路由历史先返回上一条，无路由历史则关闭浮层
-- fullscreen Mask 必须是独立的全屏黑色 View（约 42% 不透明度），作为 Root 的第一个子层，白色词典卡片后加入并覆盖在 Mask 上；禁止只依赖 Root 的半透明 background，因为部分 ROM 的应用悬浮窗口不会稳定显示 Root alpha 背景
+- `mode=fullscreen` 的 WindowManager 根层必须覆盖整个显示区域，包含状态栏和导航栏，并在词典白色卡片下方绘制黑色半透明 Mask；透明 Back 宿主的系统栏必须透出底层 Mask。点击卡片外 Mask 必须立即关闭本次 Intent 浮层。系统返回键、Android 13+ 系统返回手势、左右边缘返回手势统一调用同一个 `handleLookupBack()`：有路由历史先返回上一条，无路由历史则关闭浮层
+- fullscreen Mask 必须是独立的全屏黑色 View（约 42% 不透明度），作为 Root 的第一个子层，覆盖系统栏区域；白色词典卡片后加入并覆盖在 Mask 上；禁止只依赖 Root 的半透明 background，因为部分 ROM 的应用悬浮窗口不会稳定显示 Root alpha 背景
 - Intent 浮层顶部词头按参考视频2支持编辑态：点词头切换为输入框 + 蓝色“确认”并弹出键盘；编辑态按返回只退出编辑并收起键盘，第二次返回才继续走查询路由/关闭逻辑。OCR 触发期间蓝色悬浮球不得临时设为 INVISIBLE
 - 外部 Intent 的系统返回不能依赖 `TYPE_APPLICATION_OVERLAY` 自己接管：`LookupLinkActivity` 必须作为完全透明、无动画、不可触摸的 Back 宿主在浮层生命周期内保持存活，Android 13+ 通过 Activity 的 `OnBackInvokedDispatcher`、旧版本通过 `onBackPressed()` 把返回事件发送给 `FloatingService.ACTION_LOOKUP_BACK`；只有浮层真正关闭时 Service 才通知宿主 finish。这样视觉上没有额外页面，但系统返回手势有可靠接收者
 - 普通浏览/全屏 Mask 状态下 Intent Overlay 必须保持 `FLAG_NOT_FOCUSABLE`，确保透明 Back 宿主是真正的系统返回目标；只有点顶部词头进入编辑时临时去掉 `FLAG_NOT_FOCUSABLE` 以获取 IME，退出编辑或确认后立即恢复。禁止让常态 Overlay 抢走 Activity Back 焦点
