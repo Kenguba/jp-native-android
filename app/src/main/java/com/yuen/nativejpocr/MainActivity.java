@@ -261,7 +261,8 @@ public class MainActivity extends Activity {
                 // Desktop/widget search needs the same mask and Back host as
                 // Intent lookup; a direct float Service request has no host.
                 Intent host=new Intent(this,LookupLinkActivity.class)
-                        .addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION);
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
+                                Intent.FLAG_ACTIVITY_NO_ANIMATION);
                 if(value.isEmpty()){
                     host.putExtra(FloatingService.EXTRA_HOST_SEARCH,true);
                 }else{
