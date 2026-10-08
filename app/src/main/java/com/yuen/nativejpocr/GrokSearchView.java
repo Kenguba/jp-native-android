@@ -48,6 +48,8 @@ final class GrokSearchView extends FrameLayout {
     private final TextView modeButton;
     private final TextView talkButton;
     private final TextView privacyButton;
+    private TextView attachmentButton;
+    private String selectedMode = "快速";
     private View chips;
     private View popup;
     private View drawer;
@@ -160,10 +162,10 @@ final class GrokSearchView extends FrameLayout {
         input.setHint("随便问点什么");
         input.setPadding(dp(2), dp(1), dp(2), dp(7));
         input.setBackgroundColor(Color.TRANSPARENT);
-        input.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
         input.setInputType(android.text.InputType.TYPE_CLASS_TEXT |
                 android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE |
                 android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        input.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
         composer.addView(input, new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout tools = new LinearLayout(context);
@@ -172,6 +174,7 @@ final class GrokSearchView extends FrameLayout {
         composer.addView(tools, new LinearLayout.LayoutParams(-1, dp(37)));
 
         TextView add = roundButton("+", 27, SOFT, 36);
+        attachmentButton = add;
         add.setContentDescription("附件菜单");
         add.setOnClickListener(v -> showAttachmentMenu(add));
         tools.addView(add);
@@ -304,11 +307,18 @@ final class GrokSearchView extends FrameLayout {
                 actions.onUnavailable("重型模式尚未接入"));
         addMenuLine(menu, "专家", "深度思考 · 未接入", false, () ->
                 actions.onUnavailable("专家模式尚未接入"));
-        addMenuLine(menu, "✓  快速", "当前使用词典及配置的 Groq AI", true, this::closePopup);
-        addMenuLine(menu, "自动", "当前仅支持同一查词后端", false, () -> {
-            modeButton.setText("ϟ  自动  ⌄");
-            closePopup();
-        });
+        addMenuLine(menu, ("快速".equals(selectedMode) ? "✓  " : "") + "快速",
+                "当前使用词典及配置的 Groq AI", true, () -> {
+                    selectedMode = "快速";
+                    modeButton.setText("ϟ  快速  ⌄");
+                    closePopup();
+                });
+        addMenuLine(menu, ("自动".equals(selectedMode) ? "✓  " : "") + "自动",
+                "当前仅支持同一查词后端", true, () -> {
+                    selectedMode = "自动";
+                    modeButton.setText("ϟ  自动  ⌄");
+                    closePopup();
+                });
         showPopup(menu, dp(290), dp(420), Gravity.LEFT);
     }
 
@@ -334,6 +344,7 @@ final class GrokSearchView extends FrameLayout {
     private void showPopup(LinearLayout menu, int width, int height, int gravity) {
         closeDrawer();
         FrameLayout layer = new FrameLayout(getContext());
+        attachmentButton.setText("×");
         layer.setOnClickListener(v -> closePopup());
         addView(layer, new FrameLayout.LayoutParams(-1, -1));
         ScrollView scroll = new ScrollView(getContext());
@@ -344,7 +355,8 @@ final class GrokSearchView extends FrameLayout {
         scroll.addView(menu, new ScrollView.LayoutParams(-1, -2));
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 Math.min(width, getResources().getDisplayMetrics().widthPixels - dp(28)),
-                height, Gravity.BOTTOM | gravity);
+                Math.min(height, Math.max(dp(150), getHeight() - dp(140))),
+                Gravity.BOTTOM | gravity);
         lp.leftMargin = dp(14);
         lp.bottomMargin = dp(120);
         layer.addView(scroll, lp);
@@ -479,6 +491,7 @@ final class GrokSearchView extends FrameLayout {
         if (popup == null) return;
         View old = popup;
         popup = null;
+        attachmentButton.setText("+");
         removeView(old);
     }
 
