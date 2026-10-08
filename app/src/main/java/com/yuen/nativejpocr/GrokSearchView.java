@@ -334,6 +334,7 @@ final class GrokSearchView extends FrameLayout {
         addMenuLine(menu, "✧  技能", "", true, () -> unavailableAttachment("技能"));
         addMenuLine(menu, "⚭  连接器", "", true, () -> unavailableAttachment("连接器"));
         showPopup(menu, dp(225), dp(310), Gravity.LEFT);
+        attachmentButton.setText("×");
     }
 
     private void unavailableAttachment(String feature) {
@@ -344,7 +345,6 @@ final class GrokSearchView extends FrameLayout {
     private void showPopup(LinearLayout menu, int width, int height, int gravity) {
         closeDrawer();
         FrameLayout layer = new FrameLayout(getContext());
-        attachmentButton.setText("×");
         layer.setOnClickListener(v -> closePopup());
         addView(layer, new FrameLayout.LayoutParams(-1, -1));
         ScrollView scroll = new ScrollView(getContext());
