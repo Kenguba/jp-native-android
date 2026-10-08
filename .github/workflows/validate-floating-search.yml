@@ -1,6 +1,13 @@
 name: Validate floating search changes
 
 on:
+  push:
+    branches: [feature/grok-floating-search]
+    paths:
+      - 'app/**'
+      - 'build.gradle'
+      - 'settings.gradle'
+      - '.github/workflows/validate-floating-search.yml'
   pull_request:
     branches: [main]
     paths:
@@ -8,6 +15,7 @@ on:
       - 'build.gradle'
       - 'settings.gradle'
       - '.github/workflows/validate-floating-search.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -38,3 +46,10 @@ jobs:
           gradle-version: '8.9'
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleArm64Debug
+      - name: Upload ARM64 Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm64-debug-apk
+          path: app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 14
