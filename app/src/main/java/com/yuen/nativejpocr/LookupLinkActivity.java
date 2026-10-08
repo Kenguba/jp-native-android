@@ -319,6 +319,8 @@ public final class LookupLinkActivity extends Activity {
                 .putExtra(FloatingService.EXTRA_LOOKUP_HOSTED, true)
                 .putExtra(FloatingService.EXTRA_RETURN_TO_SEARCH,
                         source.getBooleanExtra(FloatingService.EXTRA_RETURN_TO_SEARCH, false))
+                .putExtra(FloatingService.EXTRA_PRIVATE_LOOKUP,
+                        source.getBooleanExtra(FloatingService.EXTRA_PRIVATE_LOOKUP, false))
                 .putExtra(FloatingService.EXTRA_SEARCH_QUERY,
                         source.getStringExtra(FloatingService.EXTRA_SEARCH_QUERY));
 
